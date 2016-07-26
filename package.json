@@ -1,0 +1,19 @@
+{
+  "name": "klasercutter",
+  "version": "1.0.0",
+  "description": "klasercutter server orangepi",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ngohuynhngockhanh/kLaserCutter.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ngohuynhngockhanh/kLaserCutter/issues"
+  },
+  "homepage": "https://github.com/ngohuynhngockhanh/kLaserCutter#readme"
+}

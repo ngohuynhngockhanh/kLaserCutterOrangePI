@@ -17,17 +17,18 @@ var	express		=	require('express'),
 	serialport	=	require("serialport"),
 	Vec2		=	require('vec2'),
 	sleep		=	require('sleep'),
-	sh 			= 	require('execSync'),
-	five		=	require("johnny-five"),
-	Galileo		=	require("galileo-io"),
+	sh 			= 	require('child_process').execSync || require('execSync'),
+	/*five		=	require("johnny-five"),
+	Raspi		=	require("raspi-io"),
 	board		=	new five.Board({
-					io: new Galileo(),
+					io: new Raspi(),
 					repl: false,
 					debug: false,
-				}),
+				}),*/
+	wpi 		=	require('wiring-op'),
 	MJPG_Streamer=	require('./lib/mjpg_streamer'),
 	SerialPort	= 	serialport.SerialPort,	
-	serialPort	= 	new SerialPort("/dev/ttyS0", {
+	serialPort	= 	new SerialPort("/dev/ttyUSB0", {
 					baudrate: 115200,
 					parser: serialport.parsers.readline("\n")
 				}),
@@ -50,7 +51,7 @@ var	express		=	require('express'),
 	argv.intervalTime3	= 	argv.intervalTime3	|| 610;						//check current laser after 610ms
 	argv.intervalTime4	=	argv.intervalTime4	|| 30000;						//30s = 30000ms. Each 30s, we check server load once
 	argv.intervalTime5	=	argv.intervalTime5	|| 60;							//60s. Each 1 minute, we check grbl status to change to power saving mode
-	argv.intervalTime6	=	argv.intervalTime6	|| 10000;						//10s. Each 10 seconds, we update Server log/ Galileo temperature OR Laser position once.
+	argv.intervalTime6	=	argv.intervalTime6	|| 10000;						//10s. Each 10 seconds, we update Server log/ Raspi temperature OR Laser position once.
 	argv.maxFileSize 	= 	argv.maxFileSize	|| 1.5 * 1024 * 1024;			//unit: byte
 	argv.privateApiKey 	= 	argv.privateApiKey 	|| '80f9f6fa60371b14d5237645b79a72f6e016b08831ce12a3';		//privateApiKey (Ionic App), create your own or use my own
 	argv.ionicAppId		=	argv.ionicAppId 	|| '46a9aa6b';												//ionic app id (ionic app), create your own or use my own
@@ -114,7 +115,7 @@ var	gcodeQueue	= 	new Deque([]),
 	newConnection,								
 	sendLCDMessage,
 	serverLoad,
-	tempGalileo,
+	tempRaspi,
 	fan,
 	relay,
 	greenButton,
@@ -148,7 +149,7 @@ function shutdown() {
 		sh.exec("shutdown -h now");	
 	}, 1000);
 }
-
+/*
 board.on("ready", function() {
 	//relay
 	relay = new five.Relay(relayStepperPin);
@@ -264,7 +265,7 @@ board.on("ready", function() {
 		}
 	});
 	
-});
+});*/
 
 app.use('/upload', express.static(__dirname + '/upload'));
 	
@@ -893,22 +894,22 @@ var AT_interval2 = setInterval(function() {
 
 var AT_interval4 = setInterval(function() {
 	serverLoad	= phpjs.trim(sh.exec("uptime | awk '{ print $10 }' | cut -c1-4").stdout);
-	tempGalileo	= phpjs.intval(sh.exec("cat /sys/class/thermal/thermal_zone0/temp | cut -c1-2").stdout);
+	tempRaspi	= phpjs.intval(sh.exec("cat /sys/class/thermal/thermal_zone0/temp | cut -c1-2").stdout);
 	exec("echo '" + serverLoad + "' >> ./upload/sl.log");
 	if (fan) {
 		if (fan.isOn) {
-			if (tempGalileo <= minCPUTemp) {
+			if (tempRaspi <= minCPUTemp) {
 				fan.off();
 			}
 		} else {
-			if (tempGalileo > maxCPUTemp) {
+			if (tempRaspi > maxCPUTemp) {
 				fan.on();
 			}
 		}
 	}
 	io.sockets.emit("system_log", {
 		'serverLoad'	: serverLoad,
-		'tempGalileo'	: tempGalileo
+		'tempRaspi'	: tempRaspi
 	});
 }, intervalTime4);
 
@@ -920,7 +921,7 @@ var AT_interval6 = setInterval(function() {
 				sendLCDMessage(phpjs.sprintf("X:%14.5fY:%14.5f", laserPos.x, laserPos.y), {backlight: false});
 				break;
 			case 1:
-				sendLCDMessage(phpjs.sprintf("Server Load:%4.2fGalileo   %2d oC", phpjs.floatval(serverLoad), tempGalileo), {backlight: false});
+				sendLCDMessage(phpjs.sprintf("Server Load:%4.2fRaspi   %2d oC", phpjs.floatval(serverLoad), tempRaspi), {backlight: false});
 				break;
 		}
 		
