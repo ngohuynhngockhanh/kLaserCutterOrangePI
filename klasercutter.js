@@ -17,26 +17,26 @@ var	express		=	require('express'),
 	serialport	=	require("serialport"),
 	Vec2		=	require('vec2'),
 	sleep		=	require('sleep'),
-	sh 			= 	require('child_process').execSync || require('sync-exec'),
-	/*five		=	require("johnny-five"),
+	sh 			= 	require('sync-exec'),
+	five		=	require("johnny-five"),
 	Raspi		=	require("raspi-io"),
 	board		=	new five.Board({
 					io: new Raspi(),
 					repl: false,
 					debug: false,
-				}),*/
-	wpi 		=	require('wiring-pi'),
+				}),
+	//wpi 		=	require('wiring-pi'),
 	MJPG_Streamer=	require('./lib/mjpg_streamer'),
 	SerialPort	= 	serialport,	
 	serialPort	= 	new SerialPort("/dev/ttyUSB0", {
 					baudrate: 115200,
 					parser: serialport.parsers.readline("\n")
 				}),
-	Deque 		= 	require("double-ended-queue");
-
+	Deque 		= 	require("double-ended-queue"),
+	sizeOf 		= 	require('image-size');
 
 //argv
-	argv.serverPort		=	argv.serverPort		|| 9090;						//kLaserCutter Server nodejs port
+	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
 	argv.minDistance	=	argv.minDistance	|| 50;							//queue will set to empty if the distance from now laser position to goal position is less than 6em					
 	argv.maxDistance	=	argv.maxDistance	|| 100;							//queue is full if the distance they went enough 8mm or more one comand
 	argv.minQueue		=	argv.minQueue		|| 10;							//queue has at least 5 elements
@@ -49,13 +49,11 @@ var	express		=	require('express'),
 	argv.intervalTime1	=	argv.intervalTime1	|| 10000;						//10s = 10000ms. Each 10s, we check grbl status once
 	argv.intervalTime2	=	argv.intervalTime2	|| 10000;						//10s = 10000ms. Each 10s, we check camera status once
 	argv.intervalTime3	= 	argv.intervalTime3	|| 610;						//check current laser after 610ms
-	argv.intervalTime4	=	argv.intervalTime4	|| 30000;						//30s = 30000ms. Each 30s, we check server load once
-	argv.intervalTime5	=	argv.intervalTime5	|| 60;							//60s. Each 1 minute, we check grbl status to change to power saving mode
-	argv.intervalTime6	=	argv.intervalTime6	|| 10000;						//10s. Each 10 seconds, we update Server log/ Raspi temperature OR Laser position once.
-	argv.maxFileSize 	= 	argv.maxFileSize	|| 1.5 * 1024 * 1024;			//unit: byte
+	argv.intervalTime4	=	argv.intervalTime4	|| 30000;						//60s. Each 1 minute, we check grbl status to change to power saving mode
+	argv.intervalTime5	=	argv.intervalTime5	|| 10000;						//10s. Each 10 seconds, we update Server log/ Raspi temperature OR Laser position once.
+	argv.maxFileSize 	= 	argv.maxFileSize	|| 5 * 1024 * 1024;			//unit: byte
 	argv.privateApiKey 	= 	argv.privateApiKey 	|| '80f9f6fa60371b14d5237645b79a72f6e016b08831ce12a3';		//privateApiKey (Ionic App), create your own or use my own
 	argv.ionicAppId		=	argv.ionicAppId 	|| '46a9aa6b';												//ionic app id (ionic app), create your own or use my own
-	argv.LCDcontroller 	= 	argv.LCDcontroller 	|| "PCF8574";												//default I2C Controller
 	argv.feedRate		=	(argv.feedRate != undefined) ? argv.feedRate : -1;								//-1 means fetch from sdcard
 	argv.maxLaserPower	= 	argv.maxLaserPower	|| 100;
 	argv.resolution		=	argv.resolution		|| px2mm;				//pic2gcode (picture 2 gcode) resolution
@@ -90,10 +88,10 @@ var	gcodeQueue	= 	new Deque([]),
 	copiesDrawing 		= 1,
 	lcdBusy 	= false,
 	//galileo pinout
-	relayStepperPin		= 	6,
-	fanPin				=	7,
-	greenButtonPin		=	8,
-	redButtonPin		=	9,
+	fanPin				=	1,
+	greenButtonPin		=	4,
+	redButtonPin		=	5,
+	speakerPin			=	26,
 	minCPUTemp	=	phpjs.intval(argv.minCPUTemp),
 	maxCPUTemp	=	phpjs.intval(argv.maxCPUTemp),
 	machineRunning		=	false,
@@ -108,7 +106,6 @@ var	gcodeQueue	= 	new Deque([]),
 	intervalTime3		= 	phpjs.intval(argv.intervalTime3),
 	intervalTime4		=	phpjs.intval(argv.intervalTime4),
 	intervalTime5		=	phpjs.intval(argv.intervalTime5),
-	intervalTime6		=	phpjs.intval(argv.intervalTime6),
 	//implement	
 	lcd,
 	ipAddress,
@@ -117,9 +114,11 @@ var	gcodeQueue	= 	new Deque([]),
 	serverLoad,
 	tempRaspi,
 	fan,
-	relay,
 	greenButton,
-	redButton;
+	speaker,
+	redButton,
+	buzzerUp = 2000,
+	buzzerDown = 1000;
 
 
 var __serial_free	= true;
@@ -130,40 +129,79 @@ var __preProcessQueue = {command: ""};
 var _getIpAddress_idx = 0;
 function getIpAddress() {
 	var ip = sh("ifconfig | grep -v 169.254.255.255 | grep -v 127.0.0.1 |  awk '/inet addr/{print substr($2,6)}'");	
+	console.log(JSON.stringify(ip, null, 4));
+	ip = ip.stdout;
+	console.log(ip);
 	ip = phpjs.explode("\n", ip);
 	console.log(ip);
 	var count = phpjs.count(ip) - 1;
-	if (count == 0)
+	if (count <= 0)
 		return "";
 	_getIpAddress_idx = (_getIpAddress_idx + 1) % count;
 	return ip[_getIpAddress_idx];
 }	
 
 function shutdown() {
+	if (fs.existsSync('./upload/rememberDevice.json'))
+		fs.writeFileSync('./data/rememberDevice.json', fs.readFileSync('./upload/rememberDevice.json'));
+	if (fs.existsSync('./upload/feedRate'))
+		fs.writeFileSync('./data/feedRate', fs.readFileSync('./upload/feedRate'));
 	sendPushNotification("The machine was shutted down!");
-	sendLCDMessage("Shutting down...Wait 10 seconds!");
-	relay.off();
+	if (sendLCDMessage)
+		sendLCDMessage("Shutting down...Wait 10 seconds!");
+	
 	fan.off();
 	console.log("shutdown");
 	setTimeout(function() {
 		sh("shutdown -h now");	
 	}, 1000);
 }
-/*
+
+//BUZZER RINGS!
+var buzzer = function(times, nowStatus) {
+	if (!speaker)
+		return;
+	if (times == 0) {
+		speaker.off();
+		return;
+	}
+	if (nowStatus != true) {
+		speaker.on();
+	} else {
+		speaker.off();
+	}
+	
+	setTimeout(function() {
+		if (nowStatus == true)
+			times--;
+		buzzer(times, ((nowStatus == true) ? false : true));
+	}, ((nowStatus != true) ? buzzerUp : buzzerDown));
+}
+
 board.on("ready", function() {
-	//relay
-	relay = new five.Relay(relayStepperPin);
-	relay.on();
+	
+	
+	
+	console.log("board is ready");
+	
 	
 	//fan
 	fan = new five.Relay(fanPin);
-	fan.off();
+	speaker = new five.Relay(speakerPin);
+	
+	buzzer(2); 
+	fan.on();
+	setTimeout(function() {fan.off();}, 6000);
 	
 	//buttons
-	greenButton = new five.Button(greenButtonPin);
+	greenButton = new five.Button({
+		pin: greenButtonPin,
+		isPullup: true
+	});
 	redButton 	= new five.Button({
 		pin: redButtonPin,
-		holdtime: 3000
+		holdtime: 3000,
+		isPullup: true
 	});
 	
 	
@@ -172,8 +210,12 @@ board.on("ready", function() {
 	var lcdTimeout;
 	
 	var lcd = new five.LCD({
-		controller: argv.LCDcontroller
+		pins: [7, 21, 22, 23, 24, 25],
+		backlight: 11,
+		rows: 2,
+		cols: 16
 	});
+	
 	
 	
 	function killLCDTimeout() {
@@ -265,9 +307,9 @@ board.on("ready", function() {
 		}
 	});
 	
-});*/
+});
 
-sh("mount -t tmpfs -o size=50m tmpfs " + __dirname + "/upload");
+
 
 app.use('/upload', express.static(__dirname + '/upload'));
 	
@@ -320,9 +362,9 @@ io.sockets.on('connection', function (socket) {
 			var options = argv;			
 			console.log(filepath);
 			if (isPICfile) {
-				var imageSize = phpjs.explode("x", sh('./bin/img_size/img_size \'' + filepath + '\'').stdout);
-				var width = phpjs.intval(imageSize[0]) / px2mm;
-				var height = phpjs.intval(imageSize[1]) / px2mm;
+				var imageSize = sizeOf(filepath);
+				var width = imageSize.width / px2mm;
+				var height = imageSize.height / px2mm;
 				console.log(width);
 				console.log(height);
 				if (width > argv.maxCoorX || height > argv.maxCoorY || width == 0 || height == 0) {
@@ -426,7 +468,7 @@ io.sockets.on('connection', function (socket) {
 		if (feedRate <= 1) feedRate = 1;
 		if (feedRate == argv.feedRate)
 			return;
-		fs.writeFile('./data/feedRate', feedRate);
+		fs.writeFile('./upload/feedRate', feedRate);
 		
 		var replaceFeedRate = function(queue) { 
 			var oldF = 'F' + argv.feedRate;
@@ -547,6 +589,7 @@ function finish() {
 	console.log('finish');
 	io.sockets.emit('finish');
 	sendPushNotification("I have just finished my job! ^-^");
+	buzzer(3); 
 	if (sendLCDMessage)
 		sendLCDMessage("I have just     finished my job!");
 	stop(false);
@@ -717,16 +760,7 @@ function receiveData(data) {
 		if (!machinePause && data_array[0] == 'Hold') {
 			unpause();
 		}
-		if (phpjs.time() - timer3 > intervalTime5) {
-			if (relay) {
-				if (data_array[0] == 'Idle' && !is_running())
-					relay.off();
-				else 
-					relay.on();
-			}
-			
-			timer3 = phpjs.time();
-		}
+		
 	} else if (data.indexOf('ok') == 0) {
 		if (__sent_count_direct > 0)
 			__sent_count_direct--;
@@ -748,7 +782,6 @@ function receiveData(data) {
 	} else {
 		io.sockets.emit('data', data);
 	}
-	console.log(__sent_count);
 	if (__sent_count == 0) {
 		__serial_free = true;
 		__write2serial();
@@ -773,7 +806,7 @@ function addQueue(list) {
 }
 function saveRememberDevice(list) {
 	list = list || rememberTokenDevice;
-	fs.writeFile('./data/rememberDevice.json', JSON.stringify(list));
+	fs.writeFile('./upload/rememberDevice.json', JSON.stringify(list));
 }
 
 function __preProcessWrite2Serial() {
@@ -841,10 +874,6 @@ function __write2serial(free) {
 }
 var __lastCommand = "";
 function write2serial(command, func) {
-	if (relay && !relay.isOn && command.length > 1) {
-		relay.on();
-		sleep.sleep(1); //sleep 1 s
-	}
 	
 	if (__lastCommand != command || phpjs.strlen(command) < 5) {
 		//add command to serial queue		
@@ -909,7 +938,7 @@ var AT_interval4 = setInterval(function() {
 	}
 	io.sockets.emit("system_log", {
 		'serverLoad'	: serverLoad,
-		'tempRaspi'	: tempRaspi
+		'tempGalileo'	: tempRaspi
 	});
 }, intervalTime4);
 
@@ -926,6 +955,6 @@ var AT_interval6 = setInterval(function() {
 		}
 		
 	}
-}, intervalTime6);
+}, intervalTime5);
 
 console.log('Server runing port ' + argv.serverPort);
