@@ -726,7 +726,6 @@ function receiveData(data) {
 		
 		io.sockets.emit('position', data_array, machineRunning, machinePause, copiesDrawing);
 		
-		var __minDistance = minDistance;
 		
 		if (!machinePause && data_array[0] == 'Hold') {
 			unpause();
