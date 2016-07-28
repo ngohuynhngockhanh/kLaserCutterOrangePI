@@ -37,13 +37,9 @@ var	express		=	require('express'),
 
 //argv
 	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
-	argv.minDistance	=	argv.minDistance	|| 50;							//queue will set to empty if the distance from now laser position to goal position is less than 6em					
-	argv.maxDistance	=	argv.maxDistance	|| 100;							//queue is full if the distance they went enough 8mm or more one comand
-	argv.minQueue		=	argv.minQueue		|| 10;							//queue has at least 5 elements
-	argv.maxQueue		=	argv.maxQueue		|| 30;							//queue has at maximum 20 elements
 	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 127;							//maxLength of batch process, in grbl wiki, it is 127
-	argv.minCPUTemp		=	argv.minCPUTemp		|| 35;							// if galileo temp <= this => turn the fan off
-	argv.maxCPUTemp		=	argv.maxCPUTemp		|| 38;							// if galileo temp > this => turn the fan on
+	argv.minCPUTemp		=	argv.minCPUTemp		|| 36;							// if galileo temp <= this => turn the fan off
+	argv.maxCPUTemp		=	argv.maxCPUTemp		|| 40;							// if galileo temp > this => turn the fan on
 	argv.maxCoorX		=	argv.maxCoorX		|| 320;							// your max X coordinate 
 	argv.maxCoorY		=	argv.maxCoorY		|| 315;							// your max Y coordinate
 	argv.intervalTime1	=	argv.intervalTime1	|| 10000;						//10s = 10000ms. Each 10s, we check grbl status once
@@ -73,13 +69,7 @@ var	gcodeQueue	= 	new Deque([]),
 	gcodeDataQueue= new Deque([]),
 	tokenDevice	=	[],
 	rememberTokenDevice = [],
-	SVGcontent	=	"",
-	currentQueue=	0,
-	currentDistance=0,
-	minDistance	=	phpjs.intval(argv.minDistance),		
-	maxDistance	=	phpjs.intval(argv.maxDistance),							
-	minQueue	=	phpjs.intval(argv.minQueue),							
-	maxQueue    =	phpjs.intval(argv.maxQueue),							
+	SVGcontent	=	"",						
 	timer1		=	phpjs.time(),
 	timer2		=	phpjs.time(),
 	timer2		=	0,
@@ -602,13 +592,12 @@ function stop(sendPush) {
 	write2serial_direct("~\n");
 	write2serial_direct("M5\n");
 	write2serial_direct("g0x0y0\n");
-	goalPos.set(0, 0);
+	//goalPos.set(0, 0);
 	sendPush = (sendPush != undefined) ? sendPush : true;
 	machineRunning	= false;
 	machinePause	= true;
 	timer2			= 0;
 	gcodeQueue 		= new Deque(gcodeDataQueue);
-	currentQueue 	= 0;
 	currentDistance = 0;
 	stopCountingTime();
 	console.log('stop!');
@@ -719,22 +708,11 @@ function sendFirstGCodeLine() {
 	
 	command = phpjs.str_replace(" ", "", command);
 	write2serial(command);
-	
-	//get X and Y position from the command to count the length that the machine has run
-	var commandX = getPosFromCommand('X', command);
-	var commandY = getPosFromCommand('Y', command);
-	if (commandX != undefined && commandY != undefined) { //if exist x or y coordinate.
-		var newPos = new Vec2(phpjs.floatval(commandX), phpjs.floatval(commandY));
-		currentDistance += newPos.distance(goalPos);
-		goalPos.set(newPos);
-	}
-	currentQueue++;	
 	return true;
 }
 
 function sendGcodeFromQueue() {
-	if ((currentDistance < maxDistance || currentQueue < minQueue || canSendImage) && currentQueue < maxQueue && __serial_queue.length < maxQueue)
-		sendFirstGCodeLine();
+	sendFirstGCodeLine();
 }
 
 function receiveData(data) {
@@ -747,15 +725,8 @@ function receiveData(data) {
 		
 		
 		io.sockets.emit('position', data_array, machineRunning, machinePause, copiesDrawing);
-		//console.log(currentQueue + " " + laserPos.distance(goalPos) + " " + minDistance);
+		
 		var __minDistance = minDistance;
-		if (canSendImage)
-			__minDistance <<= 8; //*2^8
-		if ((laserPos.distance(goalPos) < __minDistance) || (data_array[0] == 'Idle' && gcodeQueue.length > 0)) {
-			currentQueue = 0;
-			currentDistance = 0;
-			
-		} 
 		
 		if (!machinePause && data_array[0] == 'Hold') {
 			unpause();
@@ -776,12 +747,12 @@ function receiveData(data) {
 		}
 	} else if (data.indexOf('error') > -1) {
 		__sent_count--;
-		currentQueue--;
 		console.log(data);
 		io.sockets.emit('error', {id: 2, message: data});
 	} else {
 		io.sockets.emit('data', data);
 	}
+	//console.log(__sent_count);
 	if (__sent_count == 0) {
 		__serial_free = true;
 		__write2serial();
@@ -899,9 +870,8 @@ serialPort.on("open", function (error) {
 	} else {
 		console.log('open serial port');
 		var interval = setInterval(function() {
-			//increase the max element in the queue
 			serialPort.write("?");
-			serialPort.write("");	
+				
 		}, intervalTime3);
 		serialPort.on('data', function(data) {
 			//console.log(data);
