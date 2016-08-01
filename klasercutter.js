@@ -82,6 +82,8 @@ var	gcodeQueue	= 	new Deque([]),
 	greenButtonPin		=	4,
 	redButtonPin		=	5,
 	speakerPin			=	26,
+	lcdPowerPin		=	14,
+	lcdContrastPin		=	13,
 	minCPUTemp	=	phpjs.intval(argv.minCPUTemp),
 	maxCPUTemp	=	phpjs.intval(argv.maxCPUTemp),
 	machineRunning		=	false,
@@ -169,11 +171,17 @@ var buzzer = function(times, nowStatus) {
 }
 
 board.on("ready", function() {
-	
+	//lcdContrast
 	
 	
 	console.log("board is ready");
+	var lcdPower = new five.Relay(lcdPowerPin);
+	lcdPower.off();
 	
+	lcdPower.on();
+	
+	var lcdContrast = new five.Relay(lcdContrastPin);
+	lcdContrast.on();
 	
 	//fan
 	fan = new five.Relay(fanPin);
