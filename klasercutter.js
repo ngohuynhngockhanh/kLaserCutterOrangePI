@@ -37,7 +37,7 @@ var	express		=	require('express'),
 
 //argv
 	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
-	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 127;							//maxLength of batch process, in grbl wiki, it is 127
+	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 96;							//maxLength of batch process, in grbl wiki, it is 127
 	argv.minCPUTemp		=	argv.minCPUTemp		|| 36;							// if galileo temp <= this => turn the fan off
 	argv.maxCPUTemp		=	argv.maxCPUTemp		|| 40;							// if galileo temp > this => turn the fan on
 	argv.maxCoorX		=	argv.maxCoorX		|| 320;							// your max X coordinate 
@@ -263,12 +263,11 @@ board.on("ready", function() {
 	}
 	
 	
-	ipAddress = "";
-	do {
-		ipAddress = getIpAddress();
+	
+	getTheFirstIp = function () {
+		var ipAddress = getIpAddress();
 		if (phpjs.strlen(ipAddress) > 7) {
 			sendLCDMessage("IP Address:     " + ipAddress, {timeout: 30000});
-			break;
 		} else {
 			lcd.clear();
 			lcd.cursor(0, 0).print("Wait for IP");
@@ -276,8 +275,13 @@ board.on("ready", function() {
 				lcd.cursor(1, 0).print(".............." + i + "s");
 				sleep.sleep(1);
 			}
-		}
-	} while (phpjs.strlen(ipAddress) > 7);
+			setTimeout(function() {
+				getTheFirstIp();
+			}, 5000);
+		}			
+	}
+	
+	getTheFirstIp();
 	
 	greenButton.on("hold", function() {
 		sendLCDMessage("IP Address:     " + getIpAddress(), {timeout: 5000});	
@@ -444,7 +448,7 @@ io.sockets.on('connection', function (socket) {
 	socket.on('cmd', function(cmd) {
 		cmd = cmd || "";
 		cmd = phpjs.str_replace(['"', "'"], '', cmd);
-		write2serial(cmd);
+		write2serial_direct(cmd + "\n");
 	});
 	socket.on('resolution', function(resolution) {
 		argv.resolution = resolution;
@@ -720,8 +724,13 @@ function sendFirstGCodeLine() {
 }
 
 function sendGcodeFromQueue() {
-	sendFirstGCodeLine();
+	for (var i = 0; i < phpjs.rand(1, 3); i++)
+		sendFirstGCodeLine();
 }
+
+var timeoutRunningPeriod = 2000;
+
+var timeoutOnRunning = undefined;
 
 function receiveData(data) {
 	//console.log(data);
@@ -759,11 +768,20 @@ function receiveData(data) {
 	} else {
 		io.sockets.emit('data', data);
 	}
-	//console.log(__sent_count);
-	if (__sent_count == 0) {
+	console.log(__sent_count);
+	if (timeoutOnRunning)
+		clearTimeout(timeoutOnRunning);
+	if (is_running()) {
+		timeoutOnRunning = setTimeout(function() {
+			if (is_running())
+				receiveData('ok');
+		}, timeoutRunningPeriod);
+	}
+	if (__sent_count <= 0) {
 		__serial_free = true;
 		__write2serial();
 	}
+	
 }
 
 function addQueue(list) {
@@ -859,11 +877,12 @@ function write2serial(command, func) {
 			'command'	: command + "\n",
 			'func'		: func
 		});
-		console.log(command);
+		//console.log(command);
 		if (__serial_free)
 			__write2serial();
 	}
 }
+
 
 function write2serial_direct(command) {
 	__sent_count_direct++;
