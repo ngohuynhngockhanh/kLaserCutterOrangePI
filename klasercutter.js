@@ -472,7 +472,7 @@ io.sockets.on('connection', function (socket) {
 			var oldF = 'F' + argv.feedRate;
 			var newF = 'F' + feedRate;
 			var i = start;
-			for (; i < phpjs.min(500 + start, queue.length); i++)
+			for (; i < phpjs.min(queue.length / 100 + start, queue.length); i++)
 				queue[i] = phpjs.str_replace(oldF, newF, queue[i]);
 			console.log("replace Feed rate");
 			if (start == 0)
