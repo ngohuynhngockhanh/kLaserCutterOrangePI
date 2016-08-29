@@ -14,7 +14,7 @@ var	express		=	require('express'),
 	Jimp		=	require('jimp'),
 	svg2gcode	=	require('./lib/svg2gcode'),
 	pic2gcode	=	require('./lib/pic2gcode'),
-	serialport	=	require("serialport"),
+	Streamer	=	require('./lib/streamer'),
 	Vec2		=	require('vec2'),
 	sleep		=	require('sleep'),
 	sh 			= 	require('sync-exec'),
@@ -27,14 +27,9 @@ var	express		=	require('express'),
 				}),
 	//wpi 		=	require('wiring-pi'),
 	MJPG_Streamer=	require('./lib/mjpg_streamer'),
-	SerialPort	= 	serialport,	
-	serialPort	= 	new SerialPort("/dev/ttyUSB0", {
-					baudrate: 115200,
-					parser: serialport.parsers.readline("\n")
-				}),
+	
 	Deque 		= 	require("double-ended-queue"),
 	sizeOf 		= 	require('image-size');
-
 //argv
 	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
 	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 127;							//maxLength of batch process, in grbl wiki, it is 127
@@ -92,12 +87,17 @@ var	gcodeQueue	= 	new Deque([]),
 	imagePath			=	'',
 	laserPos	=	new Vec2(0, 0),
 	goalPos		=	new Vec2(0, 0),
-	mjpg_streamer=  new MJPG_Streamer(false, argv.mjpg),
 	intervalTime1		=	phpjs.intval(argv.intervalTime1),
 	intervalTime2		=	phpjs.intval(argv.intervalTime2),
 	intervalTime3		= 	phpjs.intval(argv.intervalTime3),
 	intervalTime4		=	phpjs.intval(argv.intervalTime4),
 	intervalTime5		=	phpjs.intval(argv.intervalTime5),
+	mjpg_streamer=  new MJPG_Streamer(false, argv.mjpg),
+	streamer	=	new Streamer({
+		freq: intervalTime3,
+		receiveFunc: receiveData,
+		bufferLength: argv.maxLengthCmd
+	}),
 	//implement	
 	lcd,
 	ipAddress,
@@ -113,11 +113,7 @@ var	gcodeQueue	= 	new Deque([]),
 	buzzerDown = 1000;
 
 
-var __serial_free	= true;
-var __sent_count	= 0; 
-var __sent_count_direct = 0;
-var __serial_queue	= [];
-var __preProcessQueue = {command: ""};
+
 var _getIpAddress_idx = 0;
 function getIpAddress() {
 	var ip = sh("ifconfig | grep -v 169.254.255.255 | grep -v 127.0.0.1 |  awk '/inet addr/{print substr($2,6)}'");	
@@ -448,7 +444,7 @@ io.sockets.on('connection', function (socket) {
 	socket.on('cmd', function(cmd) {
 		cmd = cmd || "";
 		cmd = phpjs.str_replace(['"', "'"], '', cmd);
-		write2serial_direct(cmd + "\n");
+		streamer.writeDirect(cmd + "\n");
 	});
 	socket.on('resolution', function(resolution) {
 		argv.resolution = resolution;
@@ -480,7 +476,7 @@ io.sockets.on('connection', function (socket) {
 				queue[i] = phpjs.str_replace(oldF, newF, queue[i]);
 			console.log("replace Feed rate");
 			if (start == 0)
-				write2serial(phpjs.sprintf("G01 F%.1f", phpjs.floatval(feedRate)));
+				streamer.write(phpjs.sprintf("G01 F%.1f", phpjs.floatval(feedRate)));
 			if (i < queue.length)	
 				setTimeout(function() {replaceFeedRate(queue, i);}, 5);
 			
@@ -583,7 +579,7 @@ function finishSent() {
 	if (__finishSentInterval == undefined) {
 		console.log("finish 'Sent gcode process'");
 		__finishSentInterval = setInterval(function() {
-			if (__sent_count == 0) {
+			if (streamer.isFree()) {
 				clearInterval(__finishSentInterval);				
 				finish();
 				__finishSentInterval = undefined;
@@ -603,12 +599,7 @@ function finish() {
 }
 
 function stop(sendPush) {
-	__serial_queue = [];
-	__sent_count = 0;
-	__preProcessQueue.command = "";
-	write2serial_direct("~\n");
-	write2serial_direct("M5\n");
-	write2serial_direct("g0x0y0\n");
+	streamer.stop();
 	//goalPos.set(0, 0);
 	sendPush = (sendPush != undefined) ? sendPush : true;
 	machineRunning	= false;
@@ -619,7 +610,7 @@ function stop(sendPush) {
 	stopCountingTime();
 	console.log('stop!');
 	setTimeout(function() {
-		write2serial("~");
+		streamer.write("~");
 	}, 400);
 	if (sendPush)
 		sendPushNotification("The machine was stopped");
@@ -647,19 +638,22 @@ function start(copies) {
 	copiesDrawing = copies;
 	if (gcodeQueue.isEmpty() && gcodeDataQueue.length > 0)
 		gcodeQueue = new Deque(gcodeDataQueue.toArray());
-	write2serial_direct("~\n");
+	streamer.writeDirect("~\n");
 	sendPushNotification("The machine has just been started!");
+	
+	for(var i = 0; i < phpjs.min(phpjs.rand(5, 10), gcodeQueue.length); i++)
+		sendGcodeFromQueue();
 }
 
 function pause() {
 	machinePause = true;
-	write2serial_direct("!\n");
+	streamer.writeDirect("!\n");
 	console.log("pause");
 }
 
 function unpause() {
 	machinePause = false;
-	write2serial_direct("~\n");
+	streamer.writeDirect("~\n");
 	console.log("unpause");
 }
 
@@ -673,7 +667,7 @@ function is_running() {
 
 function softReset() {
 	console.log("reset");
-	write2serial("\030");
+	streamer.write("\030");
 }
 
 function sendCommand(command) {
@@ -682,7 +676,7 @@ function sendCommand(command) {
 	else {
 		command = phpjs.strval(command);
 		console.log("send command " + command);
-		write2serial(command);
+		streamer.write(command);
 	}
 }
 
@@ -724,13 +718,13 @@ function sendFirstGCodeLine() {
 	io.sockets.emit("gcode", {command: command, length: gcodeQueue.length}, timer2);
 	
 	command = phpjs.str_replace(" ", "", command);
-	write2serial(command);
+	streamer.write(command);
 	return true;
 }
 
+
 function sendGcodeFromQueue() {
-	for (var i = 0; i < phpjs.rand(1, 2); i++)
-		sendFirstGCodeLine();
+	sendFirstGCodeLine();
 }
 
 var timeoutRunningPeriod = 2000;
@@ -754,26 +748,20 @@ function receiveData(data) {
 		}
 		
 	} else if (data.indexOf('ok') == 0) {
-		if (__sent_count_direct > 0)
-			__sent_count_direct--;
-		else
-			__sent_count--;
-			
-		if (__preProcessQueue.command == "") 
-			__preProcessQueue = __preProcessWrite2Serial();
-		//console.log(__sent_count + " " + __sent_count_direct);
+		streamer.receiveOk();
+		
+		
 		timer1 = phpjs.time();
 		if (is_running()) {
 			sendGcodeFromQueue();
 		}
 	} else if (data.indexOf('error') > -1) {
-		__sent_count--;
-		console.log(data);
+		streamer.receiveError();
 		io.sockets.emit('error', {id: 2, message: data});
 	} else {
 		io.sockets.emit('data', data);
 	}
-	console.log(__sent_count);
+	console.log(streamer.getCurrentSentCountCommand());
 	if (timeoutOnRunning)
 		clearTimeout(timeoutOnRunning);
 	if (is_running()) {
@@ -782,10 +770,7 @@ function receiveData(data) {
 				receiveData('ok');
 		}, timeoutRunningPeriod);
 	}
-	if (__sent_count <= 0) {
-		__serial_free = true;
-		__write2serial();
-	}
+	streamer.update(); //try to send new command
 	
 }
 
@@ -810,109 +795,15 @@ function saveRememberDevice(list) {
 	fs.writeFile('./upload/rememberDevice.json', JSON.stringify(list));
 }
 
-function __preProcessWrite2Serial() {
-	var command = [];
-	var func;
-	var i = 0;
-	var length = 0;
-	
-	do {
-		//process check serial queue is empty
-		if (__serial_queue.length == 0)
-			break;
-		
-		//check the length of command batch
-		if (length + phpjs.strlen(__serial_queue[0].command) > argv.maxLengthCmd)
-			break;
-			
-		//add command to batch
-		var ele = __serial_queue.shift();
-		command.push(ele.command);
-		length += phpjs.strlen(ele.command);
-		func	= ele.func;
-		
-		i++;
-	} while (!func);
-	
-	command = command.join('');
-	
-	return {
-		sent_count: i,
-		command		: command,
-		length		: length,
-		func		: func
-	};
-}
 
 
 
-function __write2serial(free) {
-	if ((!__serial_free && free != true) || __serial_queue.length == 0) return;
-	__serial_free = false;
-	
-	if (__preProcessQueue.command == "") 
-		__preProcessQueue = __preProcessWrite2Serial();
-		
-	
-	__sent_count = __preProcessQueue.sent_count;
-	var length = __preProcessQueue.length;
-	var func = __preProcessQueue.func;
-	var command = __preProcessQueue.command;
-	
-	//console.log("Send " + __sent_count + " with length " + length + " ; con " + __serial_queue.length );
-	//console.log(command);
-	__preProcessQueue.command = "";
-	console.log(command);
-	
-	
-	serialPort.write(command, function (e, d) {
-		serialPort.drain(function() {
-			if (func)
-				func(e, d);
-		});
-			
-	});
-}
-var __lastCommand = "";
-function write2serial(command, func) {
-	
-	if (__lastCommand != command || phpjs.strlen(command) < 5) {
-		//add command to serial queue		
-		__serial_queue.push({
-			'command'	: command + "\n",
-			'func'		: func
-		});
-		//console.log(command);
-		if (__serial_free)
-			__write2serial();
-	}
-}
 
 
-function write2serial_direct(command) {
-	__sent_count_direct++;
-	serialPort.write(command);
-}
 
-serialPort.on("open", function (error) {
-	if (error) {
-		console.log(error);
-		io.sockets.emit("error", {id: 0, message: "Can't open Serial port", error: error});
-	} else {
-		console.log('open serial port');
-		var interval = setInterval(function() {
-			serialPort.write("?");
-				
-		}, intervalTime3);
-		serialPort.on('data', function(data) {
-			//console.log(data);
-			receiveData(data);
-		});
-	}
-});
 
 var AT_interval1 = setInterval(function() {
-	write2serial("?");	
+	streamer.write("?");	
 	if (is_running() && phpjs.time() - timer1 > intervalTime1) 
 		io.sockets.emit("error", {id: 0, message: 'Long time to wait ok response'});
 }, intervalTime1);

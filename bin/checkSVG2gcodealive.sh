@@ -15,7 +15,7 @@ do
 	else        
 		echo "Start SVG2gcode again"
 		echo $DIR
-		cd $DIR && cd ./../ && sudo ./klasercutter.js > /dev/null 2>&1 &
+		cd $DIR && cd ./../ && sudo ./klasercutter.js
 	fi
 	sleep 10
 done
