@@ -37,7 +37,7 @@ var	express		=	require('express'),
 
 //argv
 	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
-	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 96;							//maxLength of batch process, in grbl wiki, it is 127
+	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 127;							//maxLength of batch process, in grbl wiki, it is 127
 	argv.minCPUTemp		=	argv.minCPUTemp		|| 36;							// if galileo temp <= this => turn the fan off
 	argv.maxCPUTemp		=	argv.maxCPUTemp		|| 40;							// if galileo temp > this => turn the fan on
 	argv.maxCoorX		=	argv.maxCoorX		|| 320;							// your max X coordinate 
@@ -457,7 +457,7 @@ io.sockets.on('connection', function (socket) {
 	socket.on('maxLaserPower', function(power) {
 		power = phpjs.intval(power);
 		if (power < 0)
-			power = 0;
+			power = 1;
 		else if (power > 100)
 			power = 100;
 		
@@ -472,16 +472,21 @@ io.sockets.on('connection', function (socket) {
 			return;
 		fs.writeFile('./upload/feedRate', feedRate);
 		
-		var replaceFeedRate = function(queue) { 
+		var replaceFeedRate = function(queue, start) { 
 			var oldF = 'F' + argv.feedRate;
 			var newF = 'F' + feedRate;
-			for (var i = 0; i < queue.length; i++)
+			var i = start;
+			for (; i < phpjs.min(500 + start, queue.length); i++)
 				queue[i] = phpjs.str_replace(oldF, newF, queue[i]);
-				
-			write2serial(phpjs.sprintf("G01 F%.1f", phpjs.floatval(feedRate)));
+			console.log("replace Feed rate");
+			if (start == 0)
+				write2serial(phpjs.sprintf("G01 F%.1f", phpjs.floatval(feedRate)));
+			if (i < queue.length)	
+				setTimeout(function() {replaceFeedRate(queue, i);}, 5);
+			
 		}
-		replaceFeedRate(gcodeQueue);
-		replaceFeedRate(gcodeDataQueue);
+		replaceFeedRate(gcodeQueue, 0);
+		replaceFeedRate(gcodeDataQueue, 0);
 		argv.feedRate = feedRate;
 		if (argv.feedRate == 1)
 			argv.feedRate = 50;
@@ -724,7 +729,7 @@ function sendFirstGCodeLine() {
 }
 
 function sendGcodeFromQueue() {
-	for (var i = 0; i < phpjs.rand(1, 3); i++)
+	for (var i = 0; i < phpjs.rand(1, 2); i++)
 		sendFirstGCodeLine();
 }
 
@@ -857,7 +862,7 @@ function __write2serial(free) {
 	//console.log("Send " + __sent_count + " with length " + length + " ; con " + __serial_queue.length );
 	//console.log(command);
 	__preProcessQueue.command = "";
-	//console.log(command);
+	console.log(command);
 	
 	
 	serialPort.write(command, function (e, d) {
