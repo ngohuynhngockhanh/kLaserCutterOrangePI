@@ -32,7 +32,7 @@ var	express		=	require('express'),
 	sizeOf 		= 	require('image-size');
 //argv
 	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
-	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 127;							//maxLength of batch process, in grbl wiki, it is 127
+	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 80;							//maxLength of batch process, in grbl wiki, it is 127
 	argv.minCPUTemp		=	argv.minCPUTemp		|| 36;							// if galileo temp <= this => turn the fan off
 	argv.maxCPUTemp		=	argv.maxCPUTemp		|| 40;							// if galileo temp > this => turn the fan on
 	argv.maxCoorX		=	argv.maxCoorX		|| 320;							// your max X coordinate 
@@ -96,7 +96,8 @@ var	gcodeQueue	= 	new Deque([]),
 	streamer	=	new Streamer({
 		freq: intervalTime3,
 		receiveFunc: receiveData,
-		bufferLength: argv.maxLengthCmd
+		bufferLength: argv.maxLengthCmd,
+		debug: false
 	}),
 	//implement	
 	lcd,
@@ -469,20 +470,13 @@ io.sockets.on('connection', function (socket) {
 		fs.writeFile('./upload/feedRate', feedRate);
 		
 		var replaceFeedRate = function(queue, start) { 
-			var oldF = 'F' + argv.feedRate;
-			var newF = 'F' + feedRate;
-			var i = start;
-			for (; i < phpjs.min(queue.length / 100 + start, queue.length); i++)
-				queue[i] = phpjs.str_replace(oldF, newF, queue[i]);
+			
 			console.log("replace Feed rate");
-			if (start == 0)
-				streamer.write(phpjs.sprintf("G01 F%.1f", phpjs.floatval(feedRate)));
-			if (i < queue.length)	
-				setTimeout(function() {replaceFeedRate(queue, i);}, 5);
+			streamer.write(phpjs.sprintf("G01 F%.1f", phpjs.floatval(feedRate)));
 			
 		}
-		replaceFeedRate(gcodeQueue, 0);
-		replaceFeedRate(gcodeDataQueue, 0);
+		replaceFeedRate(gcodeQueue);
+		replaceFeedRate(gcodeDataQueue);
 		argv.feedRate = feedRate;
 		if (argv.feedRate == 1)
 			argv.feedRate = 50;
@@ -761,7 +755,6 @@ function receiveData(data) {
 	} else {
 		io.sockets.emit('data', data);
 	}
-	console.log(streamer.getCurrentSentCountCommand());
 	if (timeoutOnRunning)
 		clearTimeout(timeoutOnRunning);
 	if (is_running()) {
