@@ -2,24 +2,16 @@
 const px2mm 	=	3.54328571429;
 //require
 var	express		=	require('express'),
-	siofu 		= 	require("socketio-file-upload")
 	app        	= 	express(),
+	siofu 		= 	require("socketio-file-upload"),
 	fs         	= 	require('fs'),
 	server		=	require('http').createServer(app),
     io			=	require('socket.io').listen(server),
 	argv		=	require('optimist').argv,
 	phpjs		= 	require('phpjs'),
 	Infinity	=	1e90,
-	exec 		=	require('child_process').exec,
-	Jimp		=	require('jimp'),
-	svg2gcode	=	require('./lib/svg2gcode'),
-	pic2gcode	=	require('./lib/pic2gcode'),
-	Streamer	=	require('./lib/streamer'),
-	SVGqueue	=	require('./lib/SVGqueue'),
 	Render		=	require('./lib/Render'),
-	Vec2		=	require('vec2'),
-	sleep		=	require('sleep'),
-	sh 			= 	require('sync-exec'),
+	Controller 	=	require('./lib/Controller'),
 	five		=	require("johnny-five"),
 	Raspi		=	require("raspi-io"),
 	board		=	new five.Board({
@@ -27,11 +19,7 @@ var	express		=	require('express'),
 					repl: false,
 					debug: false,
 				}),
-	//wpi 		=	require('wiring-pi'),
-	MJPG_Streamer=	require('./lib/mjpg_streamer'),
-	
-	Deque 		= 	require("double-ended-queue"),
-	sizeOf 		= 	require('image-size');
+	MJPG_Streamer=	require('./lib/mjpg_streamer');
 //argv
 	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
 	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 80;							//maxLength of batch process, in grbl wiki, it is 127
@@ -70,19 +58,14 @@ var	tokenDevice	=	[],
 	timer2		=	0,
 	timer3		=	phpjs.time(),
 	socketClientCount	= 0,
-	copiesDrawing 		= 1,
 	//galileo pinout
-	fanPin				=	1,
-	greenButtonPin		=	4,
-	redButtonPin		=	5,
-	speakerPin			=	26,
+	
 	minCPUTemp	=	phpjs.intval(argv.minCPUTemp),
 	maxCPUTemp	=	phpjs.intval(argv.maxCPUTemp),
-	machineRunning		=	false,
-	machinePause		=	true,
+	
 	canSendImage		=	false,
 	imagePath			=	'',
-	laserPos	=	new Vec2(0, 0),
+	
 	goalPos		=	new Vec2(0, 0),
 	intervalTime1		=	phpjs.intval(argv.intervalTime1),
 	intervalTime2		=	phpjs.intval(argv.intervalTime2),
@@ -90,284 +73,120 @@ var	tokenDevice	=	[],
 	intervalTime4		=	phpjs.intval(argv.intervalTime4),
 	intervalTime5		=	phpjs.intval(argv.intervalTime5),
 	mjpg_streamer=  new MJPG_Streamer(false, argv.mjpg),
-	streamer	=	new Streamer({
-		freq: intervalTime3,
-		receiveFunc: receiveData,
-		bufferLength: argv.maxLengthCmd,
-		debug: false
-	}),
-	render		=	new Render({
-		pins: [7, 21, 22, 23, 24, 25],
-		backlight: 11,
-		rows: 2,
-		cols: 16,
-		constrast: 13
-	}, board),
-	Queue		=	new SVGqueue(streamer),
-	//implement	
-	lcd,
-	ipAddress,
-	newConnection,		
-	serverLoad,
-	tempRaspi,
-	fan,
-	greenButton,
-	speaker,
-	redButton,
-	buzzerUp = 2000,
-	buzzerDown = 1000;
-
-
-
-
-
-function shutdown() {
-	if (fs.existsSync('./upload/rememberDevice.json'))
-		fs.writeFileSync('./data/rememberDevice.json', fs.readFileSync('./upload/rememberDevice.json'));
-	if (fs.existsSync('./upload/feedRate'))
-		fs.writeFileSync('./data/feedRate', fs.readFileSync('./upload/feedRate'));
-	sendPushNotification("The machine was shutted down!");
-	render.sendLCDMessage("Shutting down...Wait 10 seconds!");
 	
-	fan.off();
-	console.log("shutdown");
-	setTimeout(function() {
-		sh("shutdown -h now");	
-	}, 1000);
-}
-
-//BUZZER RINGS!
-var buzzer = function(times, nowStatus) {
-	if (!speaker)
-		return;
-	if (times == 0) {
-		speaker.off();
-		return;
-	}
-	if (nowStatus != true) {
-		speaker.on();
-	} else {
-		speaker.off();
-	}
+	controller =	new Controller({
+		board: board,
+		siofu: siofu,
+		pins: {
+			fanPin				:	1,
+			greenButtonPin		:	4,
+			redButtonPin		:	5,
+			speakerPin			:	26,
+			lcd					: {
+				pins: [7, 21, 22, 23, 24, 25],
+				backlight: 11,
+				rows: 2,
+				cols: 16,
+				constrast: 13
+			}
+		},
+		args: {
+			buzzerUp	: 2000,
+			buzzerDown	: 1000,
+			bufferLength: argv.maxLengthCmd,
+			maxFileSize	: argv.maxFileSize,
+			feedRate	: argv.feedRate,
+			resolution	: argv.resolution,
+			minCPUTemp	: argv.minCPUTemp,
+			maxCPUTemp	: argv.maxCPUTemp
+		},
+		interval: [phpjs.intval(argv.intervalTime1), phpjs.intval(argv.intervalTime2), phpjs.intval(argv.intervalTime3), phpjs.intval(argv.intervalTime4), phpjs.intval(argv.intervalTime5)],
+		ionicKey: {
+			privateApiKey: argv.privateApiKey,
+			ionicAppId: argv.ionicAppId
+		}
+	});
 	
-	setTimeout(function() {
-		if (nowStatus == true)
-			times--;
-		buzzer(times, ((nowStatus == true) ? false : true));
-	}, ((nowStatus != true) ? buzzerUp : buzzerDown));
-}
+
+
+
+
+
 
 board.on("ready", function() {
-	//lcdContrast
-	
-	
 	console.log("board is ready");
-	
-	
-	//fan
-	fan = new five.Relay(fanPin);
-	speaker = new five.Relay(speakerPin);
-	
-	buzzer(2); 
-	fan.on();
-	setTimeout(function() {fan.off();}, 6000);
-	
-	//buttons
-	greenButton = new five.Button({
-		pin: greenButtonPin,
-		isPullup: true
-	});
-	redButton 	= new five.Button({
-		pin: redButtonPin,
-		holdtime: 3000,
-		isPullup: true
-	});
-	
-	
-	
-	
-	var lcd = 
-	
-	
-	
-	
-	
-	newConnection = function(address) {
-		render.sendLCDMessage(phpjs.sprintf("Connection(s):%02d%s", socketClientCount, phpjs.trim(address)));
-	}
-	
-	
-	
-	getTheFirstIp = function () {
-				
-	}
-	
-	getTheFirstIp();
-	
-	greenButton.on("hold", function() {
-		render.printIP();
-	});
-	redButton.on("down", function() {
-		if (machineRunning) {
-			if (machinePause) {
-				render.sendLCDMessage("Resuming...");
-				unpause();
-			} else {
-				render.sendLCDMessage("Pause");
-				pause();
-			}
-		}
-	});
-	redButton.on("hold", function() {
-		if (!machineRunning) {
-			if (machinePause)
-				unpause();
-			shutdown();
-		} else {
-			unpause();
-			render.sendLCDMessage("Halt the machine");
-			stop();
-		}
-	});
-	
 });
 
 
 
 app.use('/upload', express.static(__dirname + '/upload'));
-	
+
+
+controller.on('emitToAllSocket', function(msg, args) {
+	if (msg == "position") {
+		io.sockets.emit(msg, args[0], args[1], args[2], args[3]);
+	} else if (msg == "gcode") {
+		io.sockets.emit(msg, args[0], args[1]);
+	} else {
+		
+		io.sockets.emit(msg, args);
+	}	
+});
+
+controller.on('emitToSocketOrAll', function (socket, msg, args) {
+	var socket = socket || io.sockets;
+	if (msg == "AllGcode") {
+		socket.emit(msg, args[0], args[1]);
+	} else if (msg == "sendImage") {
+		socket.emit(msg, args[0], args[1], args[2]);
+	} else 
+		socket.emit(msg, args);
+});
+
+controller.on('feedRate', function(feedRate) {
+	argv.feedRate = feedRate;
+})
+
 io.sockets.on('connection', function (socket) {
 	socketClientCount++;
 	//socket ip
-	if (newConnection)
-		newConnection(socket.handshake.address);
+	controller.newConnection(socketClientCount, phpjs.str_replace("::ffff:", "", socket.handshake.address));
+	controller.uploader.listen(socket);
 	
-	var uploader = new siofu();
-    uploader.dir = "./upload";
-    uploader.listen(socket);
-	uploader.on("start", function(event) {
-		console.log("upload task starts");
-		pic2gcode.clear();
-		event.file.name = phpjs.str_replace("'", "", event.file.name);
-		var file = event.file;
-		var fileSize = file.size;
-		if (fileSize > argv.maxFileSize) {
-			socket.emit("error", {id: 3, message: "MAX FILE FILE is " + (settings.maxFileSize / 1024 / 1024) + "MB"});
-			return false;
-		}
-	});
-	 // Do something when a file is saved:
-	var __upload_complete = function(file, content, filepath, isPic) {
-		Queue.set(content);
-		if (!isPic) {
-			sendQueue();
-			fs.unlink(filepath);
-		} else
-			sendImage(socket, filepath);
-		render.sendLCDMessage("Upload completed" + file.name);
-	}
-    uploader.on("complete", function(event){
-		console.log("upload complete");
-        var file = event.file;
-		sh("cd ./upload && find ! -name '" + phpjs.str_replace(['\\', "'", 'upload/'], '', file.pathName) + "' -type f -exec rm -f {} +");		
-		var filepath = './' + file.pathName;
-		var re = /(?:\.([^.]+))?$/;
-		var ext = re.exec(filepath)[1];
-		if (ext)
-			ext = phpjs.strtolower(ext);
-		
-		setTimeout(function() {
-			SVGcontent = "";
-			var isGCODEfile = (ext == 'gcode' || ext == 'sd' || ext == 'txt');
-			var isPICfile = (ext == 'jpg' || ext == 'jpeg' || ext == 'bmp' || ext == 'png');
-			canSendImage = isPICfile;
-			var options = argv;			
-			console.log(filepath);
-			if (isPICfile) {
-				var imageSize = sizeOf(filepath);
-				var width = imageSize.width / px2mm;
-				var height = imageSize.height / px2mm;
-				console.log(width);
-				console.log(height);
-				if (width > argv.maxCoorX || height > argv.maxCoorY || width == 0 || height == 0) {
-					io.sockets.emit('error', {
-						id: 4,
-						message: phpjs.sprintf('Only accept size less than %d x %d (px x px)', argv.maxCoorX * px2mm, argv.maxCoorY * px2mm)
-					});
-				} else {
-					var image = new Jimp(filepath, function(e, image) {
-						if (e) {
-							return false;
-							fs.unlink(filepath);
-						}
-						var check = pic2gcode.pic2gcode(image, options, {
-							percent:	function(percent) {
-								socket.emit("percent", percent);
-							},
-							complete: function(gcode) {
-								__upload_complete(file, gcode, filepath, true);
-							}
-						});
-					});
-				}
-			} else {
-				var content = fs.readFileSync(filepath);
-				socket.emit("percent");	
-				if (!isGCODEfile) {
-					SVGcontent = content.toString();
-					content = svg2gcode.svg2gcode(SVGcontent, options, function(percent) {
-						
-					});
-				} else 
-					content = content.toString();
-				if (ext != 'svg')
-					SVGcontent = "";
-				
-				__upload_complete(file, content, filepath);
-			}
-		}, file.size / 1024 / 2);
-		
-    });
-	// Error handler:
-    uploader.on("error", function(event){
-        console.log("Error from uploader", event);
-    });
+    
+	
+	
 	socket.on('disconnect', function() {
 		socketClientCount--;
 	});
 	socket.on('start',function(copies){
 		copies = copies || 1;
-		start(copies);
-		render.sendLCDMessage("It's running ^^!Yeah, so cool.");
+		controller.start(copies);
 	});
 	socket.on('requestQueue', function() {
 		if (!canSendImage)
-			sendQueue(socket);
+			controller.sendQueue(socket);
 		else
-			sendImage(socket);		
+			controller.sendImage(socket);		
 	});
 	socket.on('pause', function() {
-		pause();
-		render.sendLCDMessage("Pause");		
+		controller.pause();
 	});
 	socket.on('unpause', function() {
-		unpause();
-		render.sendLCDMessage("Resuming...");		
+		controller.unpause();		
 	});
 	socket.on('softReset', function() {
-		softReset();
+		controller.softReset();
 	});
 	socket.on('stop', function() {
-		stop();
-		render.sendLCDMessage("Stopped!");		
+		controller.stop();	
 	});
 	socket.on('cmd', function(cmd) {
-		cmd = cmd || "";
-		cmd = phpjs.str_replace(['"', "'"], '', cmd);
-		streamer.writeDirect(cmd + "\n");
+		controller.sendCommand(cmd);
 	});
 	socket.on('resolution', function(resolution) {
 		argv.resolution = resolution;
+		controller.uploader.resolution(resolution);
 		io.sockets.emit("settings", argv);
 	});
 	socket.on('maxLaserPower', function(power) {
@@ -378,6 +197,7 @@ io.sockets.on('connection', function (socket) {
 			power = 100;
 		
 		argv.maxLaserPower = power;
+		controller.uploader.maxLaserPower(power);
 		console.log("change laser power to " + power + " %")
 		io.sockets.emit("settings", argv);
 	});
@@ -388,9 +208,7 @@ io.sockets.on('connection', function (socket) {
 			return;
 		fs.writeFile('./upload/feedRate', feedRate);
 		
-		Queue.fixFeedRate(feedRate);
-		
-		
+		controller.fixFeedRate(feedRate);
 		
 		argv.feedRate = feedRate;
 		if (argv.feedRate == 1)
@@ -399,20 +217,7 @@ io.sockets.on('connection', function (socket) {
 		
 	});
 	socket.on('token', function(token, remember) {
-		tokenIndexOf = tokenDevice.indexOf(token);
-		if (tokenIndexOf == -1) 
-			tokenDevice.push(token);
-		console.log(tokenDevice);
-		console.log(remember);
-		var rtdIndex = rememberTokenDevice.indexOf(token);
-		if (rtdIndex == -1 && remember) {
-			rememberTokenDevice.push(token);
-			saveRememberDevice();
-		} else if (!remember && rtdIndex > -1) {
-			rememberTokenDevice.slice(rtdIndex, 1);
-			saveRememberDevice();
-		}
-		render.sendLCDMessage((tokenIndexOf == -1 ? "New" : "Old") + " device (#" + tokenDevice.indexOf(token) + ")");
+		controller.token.add(token, remember);
 	});
 	socket.on('webcamChangeResolution', function(resolution) {
 		var list = mjpg_streamer.getSizeList();
@@ -426,318 +231,18 @@ io.sockets.on('connection', function (socket) {
 	
 	socket.emit("settings", argv);
 	socket.emit("webcamSizeList", mjpg_streamer.getSizeList());
-});
+}.bind(this));
 
 server.listen(argv.serverPort);
 siofu.listen(server);
 
 
-//set token from sdcard
-fs.readFile('./data/rememberDevice.json', function (err, data) {
-	if (err)
-		saveRememberDevice();
-	else {
-		rememberTokenDevice = JSON.parse(data);
-		tokenDevice = rememberTokenDevice.slice(0);
-	}
-});
-if (argv.feedRate == -1) 
-	fs.readFile('./data/feedRate', function (err, data) {
-		if (err)
-			argv.feedRate = 300;
-		else {
-			data = phpjs.str_replace("\n", "", data);
-			console.log(data);
-			argv.feedRate = phpjs.intval(data);
-			if (argv.feedRate <= 1)
-				argv.feedRate = 1;
-		}
-	});
-
-function sendImage(socket, filepath) {
-	if (filepath)
-		imagePath = filepath;
-	var __sendQueue = Queue.getAllGCodeLength() < 22696;
-	if (__sendQueue)
-		sendQueue();
-	var queueLength = Queue.getAllGCodeLength();
-	if (socket)
-		socket.emit("sendImage", imagePath, __sendQueue, queueLength);
-	else
-		io.sockets.emit("sendImage", imagePath, __sendQueue, queueLength);
-}
-
-function sendQueue(socket) {
-	socket = socket || io.sockets;
-	console.log('sendQueue');
-	socket.emit('AllGcode', Queue.getAllGCode(), machineRunning);
-	if (SVGcontent != "") {
-		sendSVG(SVGcontent);
-	}
-}
-
-function sendSVG(content, socket) {
-	socket = socket || io.sockets;
-	console.log('sendSVG');
-	socket.emit('sendSVG', content);
-}
-
-var __finishSentInterval;
-function finishSent() {
-	if (__finishSentInterval == undefined) {
-		console.log("finish 'Sent gcode process'");
-		__finishSentInterval = setInterval(function() {
-			if (streamer.isFree()) {
-				clearInterval(__finishSentInterval);				
-				finish();
-				__finishSentInterval = undefined;
-			}
-		}, 50);
-	}
-}
-
-function finish() {
-	console.log('finish');
-	io.sockets.emit('finish');
-	sendPushNotification("I have just finished my job! ^-^");
-	buzzer(3); 
-	render.sendLCDMessage("I have just     finished my job!");
-	stop(false);
-}
-
-function stop(sendPush) {
-	streamer.stop();
-	//goalPos.set(0, 0);
-	sendPush = (sendPush != undefined) ? sendPush : true;
-	machineRunning	= false;
-	machinePause	= true;
-	timer2			= 0;
-	
-	currentDistance = 0;
-	stopCountingTime();
-	console.log('stop!');
-	setTimeout(function() {
-		streamer.write("~");
-	}, 400);
-	if (sendPush)
-		sendPushNotification("The machine was stopped");
-	
-	Queue.revert();
-}
-
-function sendPushNotification(message) {
-	var post_data = {
-		"tokens": tokenDevice,
-		"notification":{
-			"alert": message 
-		}
-	};
-	var command = "curl -u " + argv.privateApiKey + ": -H \"Content-Type: application/json\" -H \"X-Ionic-Application-Id: " + argv.ionicAppId + "\" https://push.ionic.io/api/v1/push -d '" + JSON.stringify(post_data) + "'";
-	exec(command);
-}
-
-function start(copies) {	
-	machineRunning	= true;
-	machinePause	= false;
-	console.log("machine is running!");
-	timer2 = phpjs.time();
-	copies = phpjs.intval(copies);
-	if (copies <= 1)
-		copies = 1;
-	copiesDrawing = copies;
-	Queue.checkBeforeStart();
-	streamer.writeDirect("~\n");
-	sendPushNotification("The machine has just been started!");
-	
-	for(var i = 0; i < phpjs.min(phpjs.rand(5, 10), Queue.length()); i++)
-		sendGcodeFromQueue();
-}
-
-function pause() {
-	machinePause = true;
-	streamer.writeDirect("!\n");
-	console.log("pause");
-}
-
-function unpause() {
-	machinePause = false;
-	streamer.writeDirect("~\n");
-	console.log("unpause");
-}
-
-function stopCountingTime() {
-	io.sockets.emit("stopCountingTime");
-}
-
-function is_running() {
-	return machineRunning && !machinePause;
-}
-
-function softReset() {
-	console.log("reset");
-	streamer.write("\030");
-}
-
-function sendCommand(command) {
-	if (is_running())
-		console.log("this machine is running, so you can't execute any command");
-	else {
-		command = phpjs.strval(command);
-		console.log("send command " + command);
-		streamer.write(command);
-	}
-}
-
-function getPosFromCommand(which, command) {
-	var tmp = phpjs.explode(which, command);
-	if (tmp.length == 1)
-		return undefined;
-	return phpjs.floatval(tmp[1]);
-}
-function sendFirstGCodeLine() {
-	if (Queue.isEmpty()) {	// is empty list
-		if (copiesDrawing <= 1) {
-			finishSent();
-			return false;
-		} else {
-			Queue.revert();
-			copiesDrawing--;
-		}
-	}
-	
-	
-	//get the last command.
-	var command = Queue.shift();
-	//comment filter
-	command = command.split(';');
-	command = command[0];
-	
-	//if command is just a command, we check again
-	if (phpjs.strlen(command) <= 1 || command.indexOf(";") == 0)   //igrone comment line
-		return sendFirstGCodeLine();
-	command = phpjs.trim(command.replace(/[^a-zA-Z0-9-.$ ]/g, ''));
-	//write command to grbl
-	
-	
-	//convert command to upper style
-	command = phpjs.strtoupper(command);
-	
-	// send gcode command to client
-	io.sockets.emit("gcode", {command: command, length: Queue.length()}, timer2);
-	
-	command = phpjs.str_replace(" ", "", command);
-	streamer.write(command);
-	return true;
-}
-
-
-function sendGcodeFromQueue() {
-	sendFirstGCodeLine();
-}
-
-var timeoutRunningPeriod = 2000;
-
-var timeoutOnRunning = undefined;
-
-function receiveData(data) {
-	//console.log(data);
-	if (data.indexOf('<') == 0) {	//type <status,...>
-		//console.log(data);
-		data = phpjs.str_replace(['<', '>', 'WPos', 'MPos', ':', "", "\n"], '', data);
-		var data_array = phpjs.explode(',', data);
-		laserPos.set(phpjs.floatval(data_array[1]), phpjs.floatval(data_array[2]));
-		
-		
-		io.sockets.emit('position', data_array, machineRunning, machinePause, copiesDrawing);
-		
-		
-		if (!machinePause && data_array[0] == 'Hold') {
-			unpause();
-		}
-		
-	} else if (data.indexOf('ok') == 0) {
-		streamer.receiveOk();
-		
-		
-		timer1 = phpjs.time();
-		if (is_running()) {
-			sendGcodeFromQueue();
-		}
-	} else if (data.indexOf('error') > -1) {
-		streamer.receiveError();
-		io.sockets.emit('error', {id: 2, message: data});
-	} else {
-		io.sockets.emit('data', data);
-	}
-	if (timeoutOnRunning)
-		clearTimeout(timeoutOnRunning);
-	if (is_running()) {
-		timeoutOnRunning = setTimeout(function() {
-			if (is_running())
-				receiveData('ok');
-		}, timeoutRunningPeriod);
-	}
-	streamer.update(); //try to send new command
-	
-}
-
-function saveRememberDevice(list) {
-	list = list || rememberTokenDevice;
-	fs.writeFile('./upload/rememberDevice.json', JSON.stringify(list));
-}
-
-
-
-
-
-
-
-
-var AT_interval1 = setInterval(function() {
-	streamer.write("?");	
-	if (is_running() && phpjs.time() - timer1 > intervalTime1) 
-		io.sockets.emit("error", {id: 0, message: 'Long time to wait ok response'});
-}, intervalTime1);
 
 var AT_interval2 = setInterval(function() {
 	var log = mjpg_streamer.tryRun();
 	io.sockets.emit("mjpg_log", log);
 }, intervalTime2);
 
-var AT_interval4 = setInterval(function() {
-	serverLoad	= phpjs.trim(sh("uptime | awk '{ print $10 }' | cut -c1-4").stdout);
-	tempRaspi	= phpjs.intval(sh("cat /sys/class/thermal/thermal_zone0/temp | cut -c1-2").stdout);
-	exec("echo '" + serverLoad + "' >> ./upload/sl.log");
-	if (fan) {
-		if (fan.isOn) {
-			if (tempRaspi <= minCPUTemp) {
-				fan.off();
-			}
-		} else {
-			if (tempRaspi > maxCPUTemp) {
-				fan.on();
-			}
-		}
-	}
-	io.sockets.emit("system_log", {
-		'serverLoad'	: serverLoad,
-		'tempGalileo'	: tempRaspi
-	});
-}, intervalTime4);
 
-var AT_interval6 = setInterval(function() {
-	if (ipAddress && ipAddress != ""  && !render.isBusy()) {
-		var randomNumber = phpjs.rand(0, 1);
-		switch (randomNumber) {
-			case 0:
-				render.sendLCDMessage(phpjs.sprintf("X:%14.5fY:%14.5f", laserPos.x, laserPos.y), {backlight: false});
-				break;
-			case 1:
-				render.sendLCDMessage(phpjs.sprintf("Server Load:%4.2fRaspi   %2d oC", phpjs.floatval(serverLoad), tempRaspi), {backlight: false});
-				break;
-		}
-		
-	}
-}, intervalTime5);
 
 console.log('Server runing port ' + argv.serverPort);
