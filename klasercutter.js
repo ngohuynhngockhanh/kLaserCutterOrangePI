@@ -15,6 +15,8 @@ var	express		=	require('express'),
 	svg2gcode	=	require('./lib/svg2gcode'),
 	pic2gcode	=	require('./lib/pic2gcode'),
 	Streamer	=	require('./lib/streamer'),
+	SVGqueue	=	require('./lib/SVGqueue'),
+	Render		=	require('./lib/Render'),
 	Vec2		=	require('vec2'),
 	sleep		=	require('sleep'),
 	sh 			= 	require('sync-exec'),
@@ -25,7 +27,6 @@ var	express		=	require('express'),
 					repl: false,
 					debug: false,
 				}),
-	SVGqueue	=	require('./lib/SVGqueue'),
 	//wpi 		=	require('wiring-pi'),
 	MJPG_Streamer=	require('./lib/mjpg_streamer'),
 	
@@ -70,14 +71,11 @@ var	tokenDevice	=	[],
 	timer3		=	phpjs.time(),
 	socketClientCount	= 0,
 	copiesDrawing 		= 1,
-	lcdBusy 	= false,
 	//galileo pinout
 	fanPin				=	1,
 	greenButtonPin		=	4,
 	redButtonPin		=	5,
 	speakerPin			=	26,
-	lcdPowerPin		=	14,
-	lcdContrastPin		=	13,
 	minCPUTemp	=	phpjs.intval(argv.minCPUTemp),
 	maxCPUTemp	=	phpjs.intval(argv.maxCPUTemp),
 	machineRunning		=	false,
@@ -98,12 +96,18 @@ var	tokenDevice	=	[],
 		bufferLength: argv.maxLengthCmd,
 		debug: false
 	}),
+	render		=	new Render({
+		pins: [7, 21, 22, 23, 24, 25],
+		backlight: 11,
+		rows: 2,
+		cols: 16,
+		constrast: 13
+	}, board),
 	Queue		=	new SVGqueue(streamer),
 	//implement	
 	lcd,
 	ipAddress,
-	newConnection,								
-	sendLCDMessage,
+	newConnection,		
 	serverLoad,
 	tempRaspi,
 	fan,
@@ -115,20 +119,7 @@ var	tokenDevice	=	[],
 
 
 
-var _getIpAddress_idx = 0;
-function getIpAddress() {
-	var ip = sh("ifconfig | grep -v 169.254.255.255 | grep -v 127.0.0.1 |  awk '/inet addr/{print substr($2,6)}'");	
-	console.log(JSON.stringify(ip, null, 4));
-	ip = ip.stdout;
-	console.log(ip);
-	ip = phpjs.explode("\n", ip);
-	console.log(ip);
-	var count = phpjs.count(ip) - 1;
-	if (count <= 0)
-		return "";
-	_getIpAddress_idx = (_getIpAddress_idx + 1) % count;
-	return ip[_getIpAddress_idx];
-}	
+
 
 function shutdown() {
 	if (fs.existsSync('./upload/rememberDevice.json'))
@@ -136,8 +127,7 @@ function shutdown() {
 	if (fs.existsSync('./upload/feedRate'))
 		fs.writeFileSync('./data/feedRate', fs.readFileSync('./upload/feedRate'));
 	sendPushNotification("The machine was shutted down!");
-	if (sendLCDMessage)
-		sendLCDMessage("Shutting down...Wait 10 seconds!");
+	render.sendLCDMessage("Shutting down...Wait 10 seconds!");
 	
 	fan.off();
 	console.log("shutdown");
@@ -172,13 +162,7 @@ board.on("ready", function() {
 	
 	
 	console.log("board is ready");
-	var lcdPower = new five.Relay(lcdPowerPin);
-	lcdPower.off();
 	
-	lcdPower.on();
-	
-	var lcdContrast = new five.Relay(lcdContrastPin);
-	lcdContrast.on();
 	
 	//fan
 	fan = new five.Relay(fanPin);
@@ -202,94 +186,34 @@ board.on("ready", function() {
 	
 	
 	
-	var lcdTimeout;
-	
-	var lcd = new five.LCD({
-		pins: [7, 21, 22, 23, 24, 25],
-		backlight: 11,
-		rows: 2,
-		cols: 16
-	});
+	var lcd = 
 	
 	
 	
-	function killLCDTimeout() {
-		if (lcdTimeout)
-			clearTimeout(lcdTimeout);
-	}
-	function setLCDTimeout(func, timeout) {
-		killLCDTimeout();
-		lcdBusy = true;
-		lcdTimeout = setTimeout(function() {
-			func();
-			lcdBusy = false;
-		}, timeout);
-	}
 	
-	sendLCDMessage = function(message, options) {
-		options = options || {};
-		options.timeout = options.timeout || 20000;
-		options.backlight = (options.backlight != undefined) ? options.backlight : true;
-		console.log(message);
-		var length = phpjs.strlen(message);
-		var tryDraw = function(idx, length, options) {
-			lcd.clear();
-			if (options.backlight)
-				lcd.backlight();
-			for (var i = 0; i < 16 * 2; i++) {
-				var x = phpjs.intval(i / 16);
-				var y = i % 16;
-				lcd.cursor(x, y).print(message[idx]);
-				idx++;
-				
-				if (idx == length) {
-					setLCDTimeout(function() {
-						lcd.noBacklight();
-					}, options.timeout);
-					return;
-				}
-			}
-			setLCDTimeout(function() {
-				tryDraw(idx, length, options);
-			}, 1000);
-		}
-		tryDraw(0, length, options);
-	}
+	
 	newConnection = function(address) {
-		sendLCDMessage(phpjs.sprintf("Connection(s):%02d%s", socketClientCount, phpjs.trim(address)));
+		render.sendLCDMessage(phpjs.sprintf("Connection(s):%02d%s", socketClientCount, phpjs.trim(address)));
 	}
 	
 	
 	
 	getTheFirstIp = function () {
-		var ipAddress = getIpAddress();
-		if (phpjs.strlen(ipAddress) > 7) {
-			sendLCDMessage("IP Address:     " + ipAddress, {timeout: 30000});
-		} else {
-			lcd.clear();
-			lcd.cursor(0, 0).print("Wait for IP");
-			for (var i = 5 ; i >= 1; i--) {				
-				lcd.cursor(1, 0).print(".............." + i + "s");
-				sleep.sleep(1);
-			}
-			setTimeout(function() {
-				getTheFirstIp();
-			}, 5000);
-		}			
+				
 	}
 	
 	getTheFirstIp();
 	
 	greenButton.on("hold", function() {
-		sendLCDMessage("IP Address:     " + getIpAddress(), {timeout: 5000});	
+		render.printIP();
 	});
 	redButton.on("down", function() {
 		if (machineRunning) {
 			if (machinePause) {
-				sendLCDMessage("Resuming...");
+				render.sendLCDMessage("Resuming...");
 				unpause();
 			} else {
-				sendLCDMessage("Pause");
+				render.sendLCDMessage("Pause");
 				pause();
 			}
 		}
@@ -301,7 +225,7 @@ board.on("ready", function() {
 			shutdown();
 		} else {
 			unpause();
-			sendLCDMessage("Halt the machine");
+			render.sendLCDMessage("Halt the machine");
 			stop();
 		}
 	});
@@ -340,8 +264,7 @@ io.sockets.on('connection', function (socket) {
 			fs.unlink(filepath);
 		} else
 			sendImage(socket, filepath);
-		if (sendLCDMessage)
-			sendLCDMessage("Upload completed" + file.name);
+		render.sendLCDMessage("Upload completed" + file.name);
 	}
     uploader.on("complete", function(event){
 		console.log("upload complete");
@@ -415,8 +338,7 @@ io.sockets.on('connection', function (socket) {
 	socket.on('start',function(copies){
 		copies = copies || 1;
 		start(copies);
-		if (sendLCDMessage)
-			sendLCDMessage("It's running ^^!Yeah, so cool.");
+		render.sendLCDMessage("It's running ^^!Yeah, so cool.");
 	});
 	socket.on('requestQueue', function() {
 		if (!canSendImage)
@@ -426,21 +348,18 @@ io.sockets.on('connection', function (socket) {
 	});
 	socket.on('pause', function() {
 		pause();
-		if (sendLCDMessage)
-			sendLCDMessage("Pause");		
+		render.sendLCDMessage("Pause");		
 	});
 	socket.on('unpause', function() {
 		unpause();
-		if (sendLCDMessage)
-			sendLCDMessage("Resuming...");		
+		render.sendLCDMessage("Resuming...");		
 	});
 	socket.on('softReset', function() {
 		softReset();
 	});
 	socket.on('stop', function() {
 		stop();
-		if (sendLCDMessage)
-			sendLCDMessage("Stopped!");		
+		render.sendLCDMessage("Stopped!");		
 	});
 	socket.on('cmd', function(cmd) {
 		cmd = cmd || "";
@@ -493,8 +412,7 @@ io.sockets.on('connection', function (socket) {
 			rememberTokenDevice.slice(rtdIndex, 1);
 			saveRememberDevice();
 		}
-		if (sendLCDMessage)
-			sendLCDMessage((tokenIndexOf == -1 ? "New" : "Old") + " device (#" + tokenDevice.indexOf(token) + ")");
+		render.sendLCDMessage((tokenIndexOf == -1 ? "New" : "Old") + " device (#" + tokenDevice.indexOf(token) + ")");
 	});
 	socket.on('webcamChangeResolution', function(resolution) {
 		var list = mjpg_streamer.getSizeList();
@@ -583,8 +501,7 @@ function finish() {
 	io.sockets.emit('finish');
 	sendPushNotification("I have just finished my job! ^-^");
 	buzzer(3); 
-	if (sendLCDMessage)
-		sendLCDMessage("I have just     finished my job!");
+	render.sendLCDMessage("I have just     finished my job!");
 	stop(false);
 }
 
@@ -809,14 +726,14 @@ var AT_interval4 = setInterval(function() {
 }, intervalTime4);
 
 var AT_interval6 = setInterval(function() {
-	if (ipAddress && ipAddress != "" && sendLCDMessage && !lcdBusy) {
+	if (ipAddress && ipAddress != ""  && !render.isBusy()) {
 		var randomNumber = phpjs.rand(0, 1);
 		switch (randomNumber) {
 			case 0:
-				sendLCDMessage(phpjs.sprintf("X:%14.5fY:%14.5f", laserPos.x, laserPos.y), {backlight: false});
+				render.sendLCDMessage(phpjs.sprintf("X:%14.5fY:%14.5f", laserPos.x, laserPos.y), {backlight: false});
 				break;
 			case 1:
-				sendLCDMessage(phpjs.sprintf("Server Load:%4.2fRaspi   %2d oC", phpjs.floatval(serverLoad), tempRaspi), {backlight: false});
+				render.sendLCDMessage(phpjs.sprintf("Server Load:%4.2fRaspi   %2d oC", phpjs.floatval(serverLoad), tempRaspi), {backlight: false});
 				break;
 		}
 		
