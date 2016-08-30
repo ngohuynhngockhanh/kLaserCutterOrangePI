@@ -25,6 +25,7 @@ var	express		=	require('express'),
 					repl: false,
 					debug: false,
 				}),
+	SVGqueue	=	require('./lib/SVGqueue'),
 	//wpi 		=	require('wiring-pi'),
 	MJPG_Streamer=	require('./lib/mjpg_streamer'),
 	
@@ -60,9 +61,7 @@ var	express		=	require('express'),
 console.log("MJPG options: ");
 console.log(argv.mjpg);
 				
-var	gcodeQueue	= 	new Deque([]),
-	gcodeDataQueue= new Deque([]),
-	tokenDevice	=	[],
+var	tokenDevice	=	[],
 	rememberTokenDevice = [],
 	SVGcontent	=	"",						
 	timer1		=	phpjs.time(),
@@ -99,6 +98,7 @@ var	gcodeQueue	= 	new Deque([]),
 		bufferLength: argv.maxLengthCmd,
 		debug: false
 	}),
+	Queue		=	new SVGqueue(streamer),
 	//implement	
 	lcd,
 	ipAddress,
@@ -334,7 +334,7 @@ io.sockets.on('connection', function (socket) {
 	});
 	 // Do something when a file is saved:
 	var __upload_complete = function(file, content, filepath, isPic) {
-		addQueue(content);
+		Queue.set(content);
 		if (!isPic) {
 			sendQueue();
 			fs.unlink(filepath);
@@ -469,14 +469,10 @@ io.sockets.on('connection', function (socket) {
 			return;
 		fs.writeFile('./upload/feedRate', feedRate);
 		
-		var replaceFeedRate = function(queue, start) { 
-			
-			console.log("replace Feed rate");
-			streamer.write(phpjs.sprintf("G01 F%.1f", phpjs.floatval(feedRate)));
-			
-		}
-		replaceFeedRate(gcodeQueue);
-		replaceFeedRate(gcodeDataQueue);
+		Queue.fixFeedRate(feedRate);
+		
+		
+		
 		argv.feedRate = feedRate;
 		if (argv.feedRate == 1)
 			argv.feedRate = 50;
@@ -543,10 +539,10 @@ if (argv.feedRate == -1)
 function sendImage(socket, filepath) {
 	if (filepath)
 		imagePath = filepath;
-	var __sendQueue = gcodeDataQueue.length < 22696;
+	var __sendQueue = Queue.getAllGCodeLength() < 22696;
 	if (__sendQueue)
 		sendQueue();
-	var queueLength = gcodeDataQueue.length;
+	var queueLength = Queue.getAllGCodeLength();
 	if (socket)
 		socket.emit("sendImage", imagePath, __sendQueue, queueLength);
 	else
@@ -556,7 +552,7 @@ function sendImage(socket, filepath) {
 function sendQueue(socket) {
 	socket = socket || io.sockets;
 	console.log('sendQueue');
-	socket.emit('AllGcode', gcodeDataQueue, machineRunning);
+	socket.emit('AllGcode', Queue.getAllGCode(), machineRunning);
 	if (SVGcontent != "") {
 		sendSVG(SVGcontent);
 	}
@@ -599,7 +595,7 @@ function stop(sendPush) {
 	machineRunning	= false;
 	machinePause	= true;
 	timer2			= 0;
-	gcodeQueue 		= new Deque(gcodeDataQueue);
+	
 	currentDistance = 0;
 	stopCountingTime();
 	console.log('stop!');
@@ -608,6 +604,8 @@ function stop(sendPush) {
 	}, 400);
 	if (sendPush)
 		sendPushNotification("The machine was stopped");
+	
+	Queue.revert();
 }
 
 function sendPushNotification(message) {
@@ -630,12 +628,11 @@ function start(copies) {
 	if (copies <= 1)
 		copies = 1;
 	copiesDrawing = copies;
-	if (gcodeQueue.isEmpty() && gcodeDataQueue.length > 0)
-		gcodeQueue = new Deque(gcodeDataQueue.toArray());
+	Queue.checkBeforeStart();
 	streamer.writeDirect("~\n");
 	sendPushNotification("The machine has just been started!");
 	
-	for(var i = 0; i < phpjs.min(phpjs.rand(5, 10), gcodeQueue.length); i++)
+	for(var i = 0; i < phpjs.min(phpjs.rand(5, 10), Queue.length()); i++)
 		sendGcodeFromQueue();
 }
 
@@ -681,19 +678,19 @@ function getPosFromCommand(which, command) {
 	return phpjs.floatval(tmp[1]);
 }
 function sendFirstGCodeLine() {
-	if (gcodeQueue.isEmpty()) {	// is empty list
+	if (Queue.isEmpty()) {	// is empty list
 		if (copiesDrawing <= 1) {
 			finishSent();
 			return false;
 		} else {
-			gcodeQueue = new Deque(gcodeDataQueue.toArray());
+			Queue.revert();
 			copiesDrawing--;
 		}
 	}
 	
 	
 	//get the last command.
-	var command = gcodeQueue.shift();
+	var command = Queue.shift();
 	//comment filter
 	command = command.split(';');
 	command = command[0];
@@ -709,7 +706,7 @@ function sendFirstGCodeLine() {
 	command = phpjs.strtoupper(command);
 	
 	// send gcode command to client
-	io.sockets.emit("gcode", {command: command, length: gcodeQueue.length}, timer2);
+	io.sockets.emit("gcode", {command: command, length: Queue.length()}, timer2);
 	
 	command = phpjs.str_replace(" ", "", command);
 	streamer.write(command);
@@ -767,22 +764,6 @@ function receiveData(data) {
 	
 }
 
-function addQueue(list) {
-	if (phpjs.is_string(list)) {
-		//200% make sure list is a string :D
-		list = list.toString();
-		var commas = ["\r\n", "\r", "\n"];
-		for (var i = 0; i < commas.length; i++)
-			if (list.indexOf(commas[i]) > 0) {
-				list = phpjs.explode(commas[i], list);
-				break;
-			}				
-	}
-	
-	//new queue
-	gcodeQueue = new Deque(list);
-	gcodeDataQueue = new Deque(list);
-}
 function saveRememberDevice(list) {
 	list = list || rememberTokenDevice;
 	fs.writeFile('./upload/rememberDevice.json', JSON.stringify(list));
