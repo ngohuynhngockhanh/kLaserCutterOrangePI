@@ -33,8 +33,8 @@ var	express		=	require('express'),
 	argv.intervalTime4	=	argv.intervalTime4	|| 30000;						//60s. Each 1 minute, we check grbl status to change to power saving mode
 	argv.intervalTime5	=	argv.intervalTime5	|| 10000;						//10s. Each 10 seconds, we update Server log/ Raspi temperature OR Laser position once.
 	argv.maxFileSize 	= 	argv.maxFileSize	|| 5 * 1024 * 1024;			//unit: byte
-	argv.privateApiKey 	= 	argv.privateApiKey 	|| '80f9f6fa60371b14d5237645b79a72f6e016b08831ce12a3';		//privateApiKey (Ionic App), create your own or use my own
-	argv.ionicAppId		=	argv.ionicAppId 	|| '46a9aa6b';												//ionic app id (ionic app), create your own or use my own
+	argv.AuthKey 		= 	argv.AuthKey 		|| 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI2MzExNmRlNS01Yzk4LTQ3OWEtYmQ2NC0zMzc1MzgzODMxODEifQ.dsId9F6Vedb6xGsDzgC8-53Uq1smCcgfTUUJMnyi32s';		//privateApiKey (Ionic App), create your own or use my own
+	
 	argv.feedRate		=	(argv.feedRate != undefined) ? argv.feedRate : -1;								//-1 means fetch from sdcard
 	argv.maxLaserPower	= 	argv.maxLaserPower	|| 100;
 	argv.resolution		=	argv.resolution		|| px2mm;				//pic2gcode (picture 2 gcode) resolution
@@ -102,8 +102,7 @@ var	tokenDevice	=	[],
 		},
 		interval: [phpjs.intval(argv.intervalTime1), phpjs.intval(argv.intervalTime2), phpjs.intval(argv.intervalTime3), phpjs.intval(argv.intervalTime4), phpjs.intval(argv.intervalTime5)],
 		ionicKey: {
-			privateApiKey: argv.privateApiKey,
-			ionicAppId: argv.ionicAppId
+			AuthKey: argv.AuthKey
 		}
 	});
 	
@@ -218,6 +217,8 @@ io.sockets.on('connection', function (socket) {
 	});
 	socket.on('token', function(token, remember) {
 		controller.token.add(token, remember);
+		console.log("token");
+		console.log(token);
 	});
 	socket.on('webcamChangeResolution', function(resolution) {
 		var list = mjpg_streamer.getSizeList();
