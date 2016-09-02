@@ -25,11 +25,11 @@ var	express		=	require('express'),
 	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 80;							//maxLength of batch process, in grbl wiki, it is 127
 	argv.minCPUTemp		=	argv.minCPUTemp		|| 36;							// if galileo temp <= this => turn the fan off
 	argv.maxCPUTemp		=	argv.maxCPUTemp		|| 40;							// if galileo temp > this => turn the fan on
-	argv.maxCoorX		=	argv.maxCoorX		|| 320;							// your max X coordinate 
-	argv.maxCoorY		=	argv.maxCoorY		|| 315;							// your max Y coordinate
+	argv.maxCoorX		=	argv.maxCoorX		|| 355;							// your max X coordinate 
+	argv.maxCoorY		=	argv.maxCoorY		|| 355;							// your max Y coordinate
 	argv.intervalTime1	=	argv.intervalTime1	|| 10000;						//10s = 10000ms. Each 10s, we check grbl status once
 	argv.intervalTime2	=	argv.intervalTime2	|| 10000;						//10s = 10000ms. Each 10s, we check camera status once
-	argv.intervalTime3	= 	argv.intervalTime3	|| 610;						//check current laser after 610ms
+	argv.intervalTime3	= 	argv.intervalTime3	|| 1500;						//check current laser position after 610ms
 	argv.intervalTime4	=	argv.intervalTime4	|| 30000;						//60s. Each 1 minute, we check grbl status to change to power saving mode
 	argv.intervalTime5	=	argv.intervalTime5	|| 10000;						//10s. Each 10 seconds, we update Server log/ Raspi temperature OR Laser position once.
 	argv.maxFileSize 	= 	argv.maxFileSize	|| 5 * 1024 * 1024;			//unit: byte
