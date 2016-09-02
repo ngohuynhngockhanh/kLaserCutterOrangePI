@@ -163,7 +163,7 @@ io.sockets.on('connection', function (socket) {
 		controller.start(copies);
 	});
 	socket.on('requestQueue', function() {
-		if (!canSendImage)
+		if (!controller.uploader.canSendImage)
 			controller.sendQueue(socket);
 		else
 			controller.sendImage(socket);		
