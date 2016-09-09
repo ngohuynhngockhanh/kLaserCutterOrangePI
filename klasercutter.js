@@ -20,6 +20,8 @@ var	express		=	require('express'),
 					debug: false,
 				}),
 	MJPG_Streamer=	require('./lib/mjpg_streamer');
+	socketServer= require('socket.io-client')('http://ourshark.co:8000/klasercutter');
+	
 //argv
 	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
 	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 80;							//maxLength of batch process, in grbl wiki, it is 127
@@ -233,6 +235,13 @@ io.sockets.on('connection', function (socket) {
 	socket.emit("settings", argv);
 	socket.emit("webcamSizeList", mjpg_streamer.getSizeList());
 }.bind(this));
+
+socketServer.on('connect', function(){
+	console.log("Connected to server Socket")
+});
+socketServer.on('disconnect', function(){
+	console.log("Disconnected to server Socket")
+});
 
 server.listen(argv.serverPort);
 siofu.listen(server);
