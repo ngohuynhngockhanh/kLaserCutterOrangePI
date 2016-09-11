@@ -20,7 +20,15 @@ var	express		=	require('express'),
 					debug: false,
 				}),
 	MJPG_Streamer=	require('./lib/mjpg_streamer');
-	socketServer= require('socket.io-client')('http://ourshark.co:8000/klasercutter');
+	
+	var socket_client = require('socket.io-client')
+	var socketUserID=	1
+	var socketServer= socket_client('http://klasercutter.app.arduino.vn:8000/klasercutter/' + socketUserID);
+	var socketSecretKey = "bd033ee630fa3673035e11376b2fcdca"
+	var patch = require('socketio-wildcard')(socket_client.Manager)
+	patch(socketServer)
+	
+	var localSocketClient = socket_client('http://127.0.0.1:'+argv.serverPort);
 	
 //argv
 	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
@@ -238,9 +246,21 @@ io.sockets.on('connection', function (socket) {
 
 socketServer.on('connect', function(){
 	console.log("Connected to server Socket")
+	
+	socketServer.emit('authentication', {uid: socketUserID, secretKey: socketSecretKey});
 });
+
+socketServer.on('authenticated', function() {
+	console.log("Authenticated!");
+});
+
 socketServer.on('disconnect', function(){
 	console.log("Disconnected to server Socket")
+});
+
+socketServer.on('*', function(info){
+	var arg = info.data;
+	localSocketClient.emit(...arg)
 });
 
 server.listen(argv.serverPort);
