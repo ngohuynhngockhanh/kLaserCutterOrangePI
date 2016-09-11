@@ -23,7 +23,7 @@ var	express		=	require('express'),
 	
 	var socket_client = require('socket.io-client')
 	var socketUserID=	1
-	var socketServer= socket_client('http://klasercutter.app.arduino.vn:8000/klasercutter/' + socketUserID);
+	var socketServer= socket_client('http://klasercutter.app.arduino.vn:8068/klasercutter/' + socketUserID);
 	var socketSecretKey = "bd033ee630fa3673035e11376b2fcdca"
 	var patch = require('socketio-wildcard')(socket_client.Manager)
 	patch(socketServer)
