@@ -260,7 +260,8 @@ socketServer.on('disconnect', function(){
 
 socketServer.on('*', function(info){
 	var arg = info.data;
-	localSocketClient.emit(...arg)
+	console.log("Socket server recieve")
+	localSocketClient.emit.apply(this, arg)
 });
 
 server.listen(argv.serverPort);
