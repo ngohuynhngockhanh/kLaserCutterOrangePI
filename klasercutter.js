@@ -28,7 +28,7 @@ var	express		=	require('express'),
 	var patch = require('socketio-wildcard')(socket_client.Manager)
 	patch(socketServer)
 	
-	var localSocketClient = socket_client('http://127.0.0.1:'+argv.serverPort);
+	
 	
 //argv
 	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
@@ -162,7 +162,7 @@ io.sockets.on('connection', function (socket) {
 	controller.newConnection(socketClientCount, phpjs.str_replace("::ffff:", "", socket.handshake.address));
 	controller.uploader.listen(socket);
 	
-    
+    socket.emit("Say Hello")
 	
 	
 	socket.on('disconnect', function() {
@@ -244,6 +244,19 @@ io.sockets.on('connection', function (socket) {
 	socket.emit("webcamSizeList", mjpg_streamer.getSizeList());
 }.bind(this));
 
+var localSocketClient = socket_client('http://127.0.0.1:'+argv.serverPort);
+patch(localSocketClient)
+
+
+localSocketClient.on('connect', function() {
+	console.log("Connect den localhost thanh cong!")
+});
+
+
+localSocketClient.on('disconnect', function() {
+	console.log("Disconnect den localhost!")
+});
+
 socketServer.on('connect', function(){
 	console.log("Connected to server Socket")
 	
@@ -260,8 +273,12 @@ socketServer.on('disconnect', function(){
 
 socketServer.on('*', function(info){
 	var arg = info.data;
-	console.log("Socket server recieve")
-	localSocketClient.emit.apply(this, arg)
+	localSocketClient.emit.apply(localSocketClient, arg)
+});
+
+localSocketClient.on('*', function(info){
+	var arg = info.data;
+	socketServer.emit.apply(socketServer, arg)
 });
 
 server.listen(argv.serverPort);
