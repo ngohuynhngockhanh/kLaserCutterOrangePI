@@ -176,7 +176,9 @@ io.sockets.on('connection', function (socket) {
 		if (!controller.uploader.canSendImage)
 			controller.sendQueue(socket);
 		else
-			controller.sendImage(socket);		
+			controller.sendImage(socket);
+
+		socket.emit("versionCode", controller.getVersion());
 	});
 	socket.on('pause', function() {
 		controller.pause();
@@ -242,9 +244,40 @@ io.sockets.on('connection', function (socket) {
 	
 	socket.emit("settings", argv);
 	socket.emit("webcamSizeList", mjpg_streamer.getSizeList());
+	
+	socket.on("check_version", function() {
+		var currentVersion = controller.getVersion();
+		socket.emit("__check_version", currentVersion);
+	});
+	
+	//version checker
+	var can_update_machine = false
+	var updateInfo = {}
+	socket.on('__checked_version', function(newVersion, patchLink, bashLink){
+		console.log("__checked_version")
+		if (newVersion == false) {
+			can_update_machine = false
+			socket.emit("check_version_result", false)
+		} else {
+			can_update_machine = true
+			socket.emit("check_version_result", newVersion)
+			updateInfo = {
+				patchLink: patchLink,
+				newVersion: newVersion,
+				bashLink: bashLink
+			}
+		}
+		
+	})
+	
+	socket.on("update_machine", function() {
+		if (can_update_machine) {
+			
+		}
+	})
 }.bind(this));
-
-var localSocketClient = socket_client('http://127.0.0.1:'+argv.serverPort);
+ 
+var localSocketClient = socket_client('http://127.0.0.1:' + argv.serverPort);
 patch(localSocketClient)
 
 
@@ -259,7 +292,6 @@ localSocketClient.on('disconnect', function() {
 
 socketServer.on('connect', function(){
 	console.log("Connected to server Socket")
-	
 	socketServer.emit('authentication', {uid: socketUserID, secretKey: socketSecretKey});
 });
 
