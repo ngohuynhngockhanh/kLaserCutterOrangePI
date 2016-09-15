@@ -28,7 +28,12 @@ var	express		=	require('express'),
 	var patch = require('socketio-wildcard')(socket_client.Manager)
 	patch(socketServer)
 	
+	var tmpDir  = __dirname + "/upload";
 	
+	var download = require('download-file');
+	var mkdirp = require('mkdirp');
+	var extract = require("extract-zip");
+	var mv = require('mv')
 	
 //argv
 	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
@@ -272,7 +277,46 @@ io.sockets.on('connection', function (socket) {
 	
 	socket.on("update_machine", function() {
 		if (can_update_machine) {
-			
+			var version = phpjs.str_replace("/", "", updateInfo.newVersion);
+			var zipName = updateInfo.newVersion + ".zip";
+			download(updateInfo.patchLink, {
+				directory: tmpDir,
+				filename: zipName
+			}, function(err) {
+				if (err) {
+					console.log("Can't locate patch link")
+					socket.emit("update_version_step", false, "Can't locate patch link")
+				} else {
+					socket.emit("update_version_step", 1, "Saved", 10)
+					var folderLink = tmpDir + "/" + updateInfo.newVersion;
+					mkdirp(folderLink, function (err) {
+						if (err) {
+							console.error(err)
+							socket.emit("update_version_step", false, err)
+						} else {
+							var zipFile = tmpDir + "/" + zipName
+							socket.emit("update_version_step", 2, "Made tmp dir to store new patch", 20)
+							extract(zipFile, {dir: folderLink}, function (err) {
+								if (err) {
+									console.error(err)
+									socket.emit("update_version_step", false, err)
+								} else {
+									socket.emit("update_version_step", 3, "Extracted to tmp dir", 40)
+									mv(folderLink, __dirname, {mkdirp: true}, function(err) {
+										if (err) {
+											socket.emit("update_version_step", false, err)
+										} else {
+											socket.emit("update_version_step", 4, "Saved new file to folder", 80)
+											
+										}
+									});
+								}
+							})
+						}
+					});
+					
+				}
+			});
 		}
 	})
 }.bind(this));
