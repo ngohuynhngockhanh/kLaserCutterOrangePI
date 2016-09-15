@@ -34,6 +34,7 @@ var	express		=	require('express'),
 	var mkdirp = require('mkdirp');
 	var extract = require("extract-zip");
 	var mv = require('mv')
+	var recursive = require('recursive-readdir');
 	
 //argv
 	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
@@ -288,33 +289,54 @@ io.sockets.on('connection', function (socket) {
 					socket.emit("update_version_step", false, "Can't locate patch link")
 				} else {
 					socket.emit("update_version_step", 1, "Saved", 10)
-					var folderLink = tmpDir + "/" + updateInfo.newVersion;
-					mkdirp(folderLink, function (err) {
-						if (err) {
-							console.error(err)
-							socket.emit("update_version_step", false, err)
-						} else {
-							var zipFile = tmpDir + "/" + zipName
-							socket.emit("update_version_step", 2, "Made tmp dir to store new patch", 20)
-							extract(zipFile, {dir: folderLink}, function (err) {
-								if (err) {
-									console.error(err)
-									socket.emit("update_version_step", false, err)
-								} else {
-									socket.emit("update_version_step", 3, "Extracted to tmp dir", 40)
-									mv(folderLink, __dirname, {mkdirp: true}, function(err) {
+					setTimeout(function() {
+						var folderLink = tmpDir + "/" + updateInfo.newVersion;
+						mkdirp(folderLink, function (err) {
+							if (err) {
+								console.error(err)
+								socket.emit("update_version_step", false, err)
+							} else {
+								socket.emit("update_version_step", 2, "Made tmp dir to store new patch", 20)
+								setTimeout(function() {
+									var zipFile = tmpDir + "/" + zipName									
+									extract(zipFile, {dir: folderLink}, function (err) {
 										if (err) {
+											console.error(err)
 											socket.emit("update_version_step", false, err)
 										} else {
-											socket.emit("update_version_step", 4, "Saved new file to folder", 80)
-											
+											socket.emit("update_version_step", 3, "Extracted to tmp dir", 40)
+											setTimeout(function() {
+												recursive(folderLink, function (err, files) {
+													if (err) {
+														console.error(err)
+														socket.emit("update_version_step", false, err)
+													} else {
+														console.log(files);
+														socket.emit("update_version_step", 4, "Get list of files", 50)
+														var uploadTask = function(i) {
+															if (i == files.length) {
+																
+																return;
+															}
+															var fromfile = files[i]
+															var tofile = phpjs.str_replace(folderLink, __dirname, fromfile)
+															console.log(tofile)
+															/*mv(fromfile, tofile, {}, function(err) {
+																socket.emit("update_version_step", 4, "Copy file #" + i, (50 + (i / files.length * 40)))
+																setTimeout(function() {uploadTask(i++);})
+															});*/
+															
+														}
+														uploadTask(0)
+													}
+												});
+											}, 2000);
 										}
-									});
-								}
-							})
-						}
-					});
-					
+									})
+								}, 2000);
+							}
+						});
+					}, 1000);
 				}
 			});
 		}
