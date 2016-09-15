@@ -333,18 +333,24 @@ io.sockets.on('connection', function (socket) {
 																			if (err) {
 																				socket.emit("update_version_step", false, err)
 																			} else {
-																				var bashFile = tmpDir + "/" + bashName
 																				socket.emit("update_version_step", 7, "Downloaded bash updated!", 95)
-																				var command = "cd " + __dirname + " && sh " + bashFile
-																				console.log(command)
-																				var run = sh(command);
-																				console.log(run.stdout)
-																				console.log(run.stderr)
 																				setTimeout(function() {
-																					socket.emit("update_version_step", 7, "Finish", 100)
-																				}, 1000)
-																				controller.updateVersion(updateInfo.newVersion)
-																				socket.emit("versionCode", controller.getVersion())
+																					var bashFile = tmpDir + "/" + bashName
+																					console.log(bashFile)
+																					var content = fs.readFileSync(bashFile, "utf-8")
+																					console.log(content)
+																					fs.writeFileSync(bashFile, phpjs.str_replace("\r", "\n", content))
+																					var command = "cd " + __dirname + " && sh " + bashFile
+																					console.log(command)
+																					var run = sh(command);
+																					console.log(run.stdout)
+																					console.log(run.stderr)
+																					setTimeout(function() {
+																						socket.emit("update_version_step", 7, "Finish", 100)
+																					}, 1000)
+																					controller.updateVersion(updateInfo.newVersion)
+																					socket.emit("versionCode", controller.getVersion())
+																				}, 2000);
 																			}
 																		})
 																}, 1000);
