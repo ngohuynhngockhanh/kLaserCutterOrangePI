@@ -35,7 +35,7 @@ var	express		=	require('express'),
 	var extract = require("extract-zip");
 	var mv = require('mv')
 	var recursive = require('recursive-readdir');
-	
+	var sh 			= 		require('sync-exec');
 //argv
 	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
 	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 80;							//maxLength of batch process, in grbl wiki, it is 127
@@ -184,6 +184,7 @@ io.sockets.on('connection', function (socket) {
 		else
 			controller.sendImage(socket);
 
+		console.log("send current Version " + controller.getVersion())
 		socket.emit("versionCode", controller.getVersion());
 	});
 	socket.on('pause', function() {
@@ -253,20 +254,22 @@ io.sockets.on('connection', function (socket) {
 	
 	socket.on("check_version", function() {
 		var currentVersion = controller.getVersion();
+		console.log("currentVersion " + currentVersion)
 		socket.emit("__check_version", currentVersion);
 	});
 	
 	//version checker
 	var can_update_machine = false
 	var updateInfo = {}
-	socket.on('__checked_version', function(newVersion, patchLink, bashLink){
+	socket.on('__checked_version', function(newVersion, patchLink, bashLink, description){
 		console.log("__checked_version")
 		if (newVersion == false) {
 			can_update_machine = false
-			socket.emit("check_version_result", false)
+			socket.emit("check_version_result", false, "There is no new version!")
 		} else {
 			can_update_machine = true
-			socket.emit("check_version_result", newVersion)
+			socket.emit("check_version_result", newVersion, description)
+			
 			updateInfo = {
 				patchLink: patchLink,
 				newVersion: newVersion,
@@ -315,16 +318,45 @@ io.sockets.on('connection', function (socket) {
 														socket.emit("update_version_step", 4, "Get list of files", 50)
 														var uploadTask = function(i) {
 															if (i == files.length) {
-																
+																socket.emit("update_version_step", 5, "Updated!", 90)
+																setTimeout(function() {
+																	var bashName = updateInfo.newVersion + ".sh";
+																	if (!updateInfo.bashLink) {
+																		socket.emit("update_version_step", 6, "Finish", 100)
+																		controller.updateVersion(updateInfo.newVersion)
+																		socket.emit("versionCode", controller.getVersion())
+																	} else 
+																		download(updateInfo.bashLink, {
+																			directory: tmpDir,
+																			filename: bashName
+																		}, function(err) {
+																			if (err) {
+																				socket.emit("update_version_step", false, err)
+																			} else {
+																				var bashFile = tmpDir + "/" + bashName
+																				socket.emit("update_version_step", 7, "Downloaded bash updated!", 95)
+																				var command = "cd " + __dirname + " && sh " + bashFile
+																				console.log(command)
+																				var run = sh(command);
+																				console.log(run.stdout)
+																				console.log(run.stderr)
+																				setTimeout(function() {
+																					socket.emit("update_version_step", 7, "Finish", 100)
+																				}, 1000)
+																				controller.updateVersion(updateInfo.newVersion)
+																				socket.emit("versionCode", controller.getVersion())
+																			}
+																		})
+																}, 1000);
 																return;
 															}
 															var fromfile = files[i]
 															var tofile = phpjs.str_replace(folderLink, __dirname, fromfile)
 															console.log(tofile)
-															/*mv(fromfile, tofile, {}, function(err) {
-																socket.emit("update_version_step", 4, "Copy file #" + i, (50 + (i / files.length * 40)))
-																setTimeout(function() {uploadTask(i++);})
-															});*/
+															mv(fromfile, tofile, {mkdirp: true}, function(err) {
+																socket.emit("update_version_step", "4." + (++i), "Copy file #" + i, (50 + ((i - 1) / files.length * 40)))
+																setTimeout(function() {uploadTask(i);}, 100)
+															});
 															
 														}
 														uploadTask(0)
