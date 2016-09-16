@@ -421,7 +421,6 @@ server.listen(argv.serverPort);
 siofu.listen(server);
  
 
-
 var AT_interval2 = setInterval(function() {
 	var log = mjpg_streamer.tryRun();
 	io.sockets.emit("mjpg_log", log);
