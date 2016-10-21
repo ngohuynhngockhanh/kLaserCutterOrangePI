@@ -38,7 +38,7 @@ var	express		=	require('express'),
 	var sh 			= 		require('sync-exec');
 //argv
 	argv.serverPort		=	argv.serverPort		|| 9091;						//kLaserCutter Server nodejs port
-	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 80;							//maxLength of batch process, in grbl wiki, it is 127
+	argv.maxLengthCmd	=	argv.maxLengthCmd	|| 60;							//maxLength of batch process, in grbl wiki, it is 127
 	argv.minCPUTemp		=	argv.minCPUTemp		|| 36;							// if galileo temp <= this => turn the fan off
 	argv.maxCPUTemp		=	argv.maxCPUTemp		|| 40;							// if galileo temp > this => turn the fan on
 	argv.maxCoorX		=	argv.maxCoorX		|| 355;							// your max X coordinate 
@@ -186,6 +186,8 @@ io.sockets.on('connection', function (socket) {
 
 		console.log("send current Version " + controller.getVersion())
 		socket.emit("versionCode", controller.getVersion());
+		
+		
 	});
 	socket.on('pause', function() {
 		controller.pause();
@@ -197,7 +199,8 @@ io.sockets.on('connection', function (socket) {
 		controller.softReset();
 	});
 	socket.on('stop', function() {
-		controller.stop();	
+		controller.stop();
+
 	});
 	socket.on('cmd', function(cmd) {
 		controller.sendCommand(cmd);
@@ -429,3 +432,4 @@ var AT_interval2 = setInterval(function() {
 
 
 console.log('Server runing port ' + argv.serverPort);
+
