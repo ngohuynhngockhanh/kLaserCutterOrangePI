@@ -4,7 +4,7 @@ auto_script_filename=auto_start_when_boot_kLaserCutter
 auto_script_location=/etc/init.d/$auto_script_filename
 echo "Now path is: $path"
 
-apt-get install libjpeg62-turbo-dev imagemagick v4l-utils subversion -y
+apt-get install libjpeg62-dev imagemagick v4l-utils subversion -y
 
 wget http://k2.arduino.vn/img/2016/08/30/0/3093_882450-1472565139-0-mjpg-streamer.zip -O mjpg-streamer.tar.gz
 tar xvzf mjpg-streamer.tar.gz

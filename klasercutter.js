@@ -15,7 +15,7 @@ var	express		=	require('express'),
 	five		=	require("johnny-five"),
 	Raspi		=	require("raspi-io"),
 	board		=	new five.Board({
-					io: new Raspi(),
+					io: new Raspi({enableSerial: false}),
 					repl: false,
 					debug: false,
 				}),

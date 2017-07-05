@@ -19,6 +19,7 @@
   "dependencies": {
     "download-file": "^0.1.5",
     "extract-zip": "^1.5.0",
-    "heapdump": "^0.3.7"
+    "heapdump": "^0.3.7",
+    "serialport": "^4.0.7"
   }
 }
